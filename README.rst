@@ -1,5 +1,27 @@
+.. image:: http://pybee.org/project/projects/libraries/ouroboros/ouroboros.png
+    :width: 72px
+    :target: https://pybee.org/ouroboros
+
 Ouroboros
 =========
+
+.. image:: https://img.shields.io/pypi/pyversions/ouroboros.svg
+    :target: https://pypi.python.org/pypi/ouroboros
+
+.. image:: https://img.shields.io/pypi/v/ouroboros.svg
+    :target: https://pypi.python.org/pypi/ouroboros
+
+.. image:: https://img.shields.io/pypi/status/ouroboros.svg
+    :target: https://pypi.python.org/pypi/ouroboros
+
+.. image:: https://img.shields.io/pypi/l/ouroboros.svg
+    :target: https://github.com/pybee/ouroboros/blob/master/LICENSE
+
+.. image:: https://travis-ci.org/pybee/ouroboros.svg?branch=master
+    :target: https://travis-ci.org/pybee/ouroboros
+
+.. image:: https://badges.gitter.im/pybee/general.svg
+    :target: https://gitter.im/pybee/general
 
 A standalone, pure Python implementation of the Python Standard Library.
 
@@ -13,11 +35,12 @@ Community
 
 Ouroboros is part of the `BeeWare suite`_. You can talk to the community through:
 
- * `@pybeeware on Twitter`_
+* `@pybeeware on Twitter`_
 
- * The `BeeWare Users Mailing list`_, for questions about how to use the BeeWare suite.
+* The `pybee/general`_ channel on Gitter.
 
- * The `BeeWare Developers Mailing list`_, for discussing the development of new features in the BeeWare suite, and ideas for new tools for the suite.
+We foster a welcoming and respectful community as described in our
+`BeeWare Community Code of Conduct`_.
 
 Contributing
 ------------
@@ -28,8 +51,8 @@ want to contribute code, please `fork the code`_ and `submit a pull request`_.
 .. _BeeWare suite: http://pybee.org
 .. _Read The Docs: https://ouroboros.readthedocs.io
 .. _@pybeeware on Twitter: https://twitter.com/pybeeware
-.. _BeeWare Users Mailing list: https://groups.google.com/forum/#!forum/beeware-users
-.. _BeeWare Developers Mailing list: https://groups.google.com/forum/#!forum/beeware-developers
+.. _pybee/general: https://gitter.im/pybee/general
+.. _BeeWare Community Code of Conduct: http://pybee.org/community/behavior/
 .. _log them on Github: https://github.com/pybee/ouroboros/issues
 .. _fork the code: https://github.com/pybee/ouroboros
 .. _submit a pull request: https://github.com/pybee/ouroboros/pulls
