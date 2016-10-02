@@ -18,7 +18,7 @@ Ouroboros is part of the `BeeWare suite`_. You can talk to the community through
  * Beeware `gitter.im`_ channel
 
 .. _BeeWare suite: http://pybee.org
-.. _Read The Docs: https://ouroboros.readthedocs.io
+.. _Read The Docs: https://pybee-ouroboros.readthedocs.io
 .. _@pybeeware on Twitter: https://twitter.com/pybeeware
 .. _gitter.im: https://gitter.im/pybee/general
 
