@@ -15,15 +15,12 @@ Ouroboros is part of the `BeeWare suite`_. You can talk to the community through
 
  * `@pybeeware on Twitter`_
 
- * The `BeeWare Users Mailing list`_, for questions about how to use the BeeWare suite.
-
- * The `BeeWare Developers Mailing list`_, for discussing the development of new features in the BeeWare suite, and ideas for new tools for the suite.
+ * Beeware `gitter.im`_ channel
 
 .. _BeeWare suite: http://pybee.org
-.. _Read The Docs: https://ouroboros.readthedocs.io
+.. _Read The Docs: https://pybee-ouroboros.readthedocs.io
 .. _@pybeeware on Twitter: https://twitter.com/pybeeware
-.. _BeeWare Users Mailing list: https://groups.google.com/forum/#!forum/beeware-users
-.. _BeeWare Developers Mailing list: https://groups.google.com/forum/#!forum/beeware-developers
+.. _gitter.im: https://gitter.im/pybee/general
 
 Contents:
 
