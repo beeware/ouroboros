@@ -22,5 +22,8 @@
   "bugs": {
     "url": "https://github.com/pybee/ouroboros/issues"
   },
+  "files": [
+    "ouroboros"
+  ],
   "homepage": "https://github.com/pybee/ouroboros#readme"
 }
