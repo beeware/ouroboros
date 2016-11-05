@@ -1,0 +1,26 @@
+{
+  "name": "ouroboros",
+  "version": "3.4.0",
+  "description": "A standalone, pure Python implementation of the Python Standard Library.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/pybee/ouroboros.git"
+  },
+  "keywords": [
+    "python"
+  ],
+  "author": "Russell Keith-Magee",
+  "license": "Python-2.0",
+  "bugs": {
+    "url": "https://github.com/pybee/ouroboros/issues"
+  },
+  "homepage": "https://github.com/pybee/ouroboros#readme"
+}
