@@ -5,22 +5,19 @@
 Ouroboros
 =========
 
-.. image:: https://img.shields.io/pypi/pyversions/ouroboros.svg
-    :target: https://pypi.python.org/pypi/ouroboros
+|py-version| |pypi-version| |pypi-status| |license| |build-status| |gitter|
 
-.. image:: https://img.shields.io/pypi/v/ouroboros.svg
+.. |py-version| image:: https://img.shields.io/pypi/pyversions/ouroboros.svg
     :target: https://pypi.python.org/pypi/ouroboros
-
-.. image:: https://img.shields.io/pypi/status/ouroboros.svg
+.. |pypi-version| image:: https://img.shields.io/pypi/v/ouroboros.svg
     :target: https://pypi.python.org/pypi/ouroboros
-
-.. image:: https://img.shields.io/pypi/l/ouroboros.svg
+.. |pypi-status| image:: https://img.shields.io/pypi/status/ouroboros.svg
+    :target: https://pypi.python.org/pypi/ouroboros
+.. |license| image:: https://img.shields.io/pypi/l/ouroboros.svg
     :target: https://github.com/pybee/ouroboros/blob/master/LICENSE
-
-.. image:: https://travis-ci.org/pybee/ouroboros.svg?branch=master
+.. |build-status| image:: https://travis-ci.org/pybee/ouroboros.svg?branch=master
     :target: https://travis-ci.org/pybee/ouroboros
-
-.. image:: https://badges.gitter.im/pybee/general.svg
+.. |gitter| image:: https://badges.gitter.im/pybee/general.svg
     :target: https://gitter.im/pybee/general
 
 A standalone, pure Python implementation of the Python Standard Library.
