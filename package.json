@@ -1,5 +1,5 @@
 {
-  "name": "ouroboros",
+  "name": "@pybee/ouroboros",
   "version": "3.4.0",
   "description": "A standalone, pure Python implementation of the Python Standard Library.",
   "main": "index.js",
