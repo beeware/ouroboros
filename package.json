@@ -1,6 +1,6 @@
 {
   "name": "@pybee/ouroboros",
-  "version": "3.4.1-dev3",
+  "version": "3.4.1-dev.4",
   "description": "A standalone, pure Python implementation of the Python Standard Library.",
   "main": "index.js",
   "directories": {
