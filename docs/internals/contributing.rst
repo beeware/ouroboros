@@ -19,18 +19,24 @@ to run::
 
     $ git clone git@github.com:pybee/ouroboros.git
     $ cd ouroboros
-    $ mkvirtualenv ouroboros
+    $ mkvirtualenv -p `which python3` ouroboros
 
-Ouroboros uses ``unittest`` (or ``unittest2`` for Python < 2.7) for its own test
-suite as well as additional helper modules for testing. To install all the
-requirements for Ouroboros, you have to run the following commands within your
-virutal envrionment::
+Ouroboros uses ``unittest`` for its own test suite as well as additional helper
+modules for testing. To install all the requirements for Ouroboros, you have to
+run the following commands within your virutal envrionment::
 
     $ pip install -e .
     $ pip install -r requirements_dev.txt
 
-In case you are running a python version ``< 2.7`` please use the
-``requirements_dev.py26.txt`` instead because ``unittest2`` is not part
-of the standard library for these version.
+A brief reminder that ouroboros is intended to work only on python versions 3.3
+and above.
 
 Now you are ready to start hacking! Have fun!
+
+Running tests
+-------------
+
+Tests can be run using the following command from the project root::
+
+    $ python setup.py test
+
