@@ -563,8 +563,11 @@ class TestCase(object):
             finally:
                 result.stopTest(self)
             return
-        expecting_failure = getattr(testMethod,
-                                    "__unittest_expecting_failure__", False)
+        expecting_failure_method = getattr(testMethod,
+                                           "__unittest_expecting_failure__", False)
+        expecting_failure_class = getattr(self,
+                                          "__unittest_expecting_failure__", False)
+        expecting_failure = expecting_failure_class or expecting_failure_method
         outcome = _Outcome(result)
         try:
             self._outcome = outcome
@@ -1341,9 +1344,6 @@ class FunctionTestCase(TestCase):
                self._tearDownFunc == other._tearDownFunc and \
                self._testFunc == other._testFunc and \
                self._description == other._description
-
-    def __ne__(self, other):
-        return not self == other
 
     def __hash__(self):
         return hash((type(self), self._setUpFunc, self._tearDownFunc,

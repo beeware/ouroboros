@@ -1,5 +1,6 @@
 import copy
 import sys
+import tempfile
 
 import unittest
 from unittest.test.testmock.support import is_instance
@@ -237,6 +238,9 @@ class MockTest(unittest.TestCase):
         # used to cause recursion
         mock.reset_mock()
 
+    def test_reset_mock_on_mock_open_issue_18622(self):
+        a = mock.mock_open()
+        a.reset_mock()
 
     def test_call(self):
         mock = Mock()
@@ -287,6 +291,9 @@ class MockTest(unittest.TestCase):
         self.assertEqual(mock.call_args,
                          ((sentinel.Arg,), {"kw": sentinel.Kwarg}))
 
+        # Comparing call_args to a long sequence should not raise
+        # an exception. See issue 24857.
+        self.assertFalse(mock.call_args == "a long sequence")
 
     def test_assert_called_with(self):
         mock = Mock()
@@ -1323,6 +1330,32 @@ class MockTest(unittest.TestCase):
             self.assertEqual(m.mock_calls, [call.__int__(), call.__float__()])
             self.assertEqual(m.method_calls, [])
 
+    def test_mock_open_reuse_issue_21750(self):
+        mocked_open = mock.mock_open(read_data='data')
+        f1 = mocked_open('a-name')
+        f1_data = f1.read()
+        f2 = mocked_open('another-name')
+        f2_data = f2.read()
+        self.assertEqual(f1_data, f2_data)
+
+    def test_mock_open_write(self):
+        # Test exception in file writing write()
+        mock_namedtemp = mock.mock_open(mock.MagicMock(name='JLV'))
+        with mock.patch('tempfile.NamedTemporaryFile', mock_namedtemp):
+            mock_filehandle = mock_namedtemp.return_value
+            mock_write = mock_filehandle.write
+            mock_write.side_effect = OSError('Test 2 Error')
+            def attempt():
+                tempfile.NamedTemporaryFile().write('asd')
+            self.assertRaises(OSError, attempt)
+
+    def test_mock_open_alter_readline(self):
+        mopen = mock.mock_open(read_data='foo\nbarn')
+        mopen.return_value.readline.side_effect = lambda *args:'abc'
+        first = mopen().readline()
+        second = mopen().readline()
+        self.assertEqual('abc', first)
+        self.assertEqual('abc', second)
 
     def test_mock_parents(self):
         for Klass in Mock, MagicMock:

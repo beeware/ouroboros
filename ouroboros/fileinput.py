@@ -238,8 +238,10 @@ class FileInput:
         self.close()
 
     def close(self):
-        self.nextfile()
-        self._files = ()
+        try:
+            self.nextfile()
+        finally:
+            self._files = ()
 
     def __enter__(self):
         return self
@@ -281,23 +283,25 @@ class FileInput:
 
         output = self._output
         self._output = 0
-        if output:
-            output.close()
+        try:
+            if output:
+                output.close()
+        finally:
+            file = self._file
+            self._file = 0
+            try:
+                if file and not self._isstdin:
+                    file.close()
+            finally:
+                backupfilename = self._backupfilename
+                self._backupfilename = 0
+                if backupfilename and not self._backup:
+                    try: os.unlink(backupfilename)
+                    except OSError: pass
 
-        file = self._file
-        self._file = 0
-        if file and not self._isstdin:
-            file.close()
-
-        backupfilename = self._backupfilename
-        self._backupfilename = 0
-        if backupfilename and not self._backup:
-            try: os.unlink(backupfilename)
-            except OSError: pass
-
-        self._isstdin = False
-        self._buffer = []
-        self._bufindex = 0
+                self._isstdin = False
+                self._buffer = []
+                self._bufindex = 0
 
     def readline(self):
         try:
@@ -311,7 +315,10 @@ class FileInput:
             return line
         if not self._file:
             if not self._files:
-                return ""
+                if 'b' in self._mode:
+                    return b''
+                else:
+                    return ''
             self._filename = self._files[0]
             self._files = self._files[1:]
             self._filelineno = 0

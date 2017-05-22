@@ -237,6 +237,7 @@ class TestNtpath(unittest.TestCase):
             tester('ntpath.expandvars("%?bar%")', "%?bar%")
             tester('ntpath.expandvars("%foo%%bar")', "bar%bar")
             tester('ntpath.expandvars("\'%foo%\'%bar")', "\'%foo%\'%bar")
+            tester('ntpath.expandvars("bar\'%foo%")', "bar\'%foo%")
 
     @unittest.skipUnless(support.FS_NONASCII, 'need support.FS_NONASCII')
     def test_expandvars_nonascii(self):
@@ -306,13 +307,14 @@ class TestNtpath(unittest.TestCase):
             self.skipTest('nt module not available')
 
     def test_relpath(self):
-        currentdir = os.path.split(os.getcwd())[-1]
         tester('ntpath.relpath("a")', 'a')
         tester('ntpath.relpath(os.path.abspath("a"))', 'a')
         tester('ntpath.relpath("a/b")', 'a\\b')
         tester('ntpath.relpath("../a/b")', '..\\a\\b')
-        tester('ntpath.relpath("a", "../b")', '..\\'+currentdir+'\\a')
-        tester('ntpath.relpath("a/b", "../c")', '..\\'+currentdir+'\\a\\b')
+        with support.temp_cwd(support.TESTFN) as cwd_dir:
+            currentdir = os.path.basename(cwd_dir)
+            tester('ntpath.relpath("a", "../b")', '..\\'+currentdir+'\\a')
+            tester('ntpath.relpath("a/b", "../c")', '..\\'+currentdir+'\\a\\b')
         tester('ntpath.relpath("a", "b/c")', '..\\..\\a')
         tester('ntpath.relpath("c:/foo/bar/bat", "c:/x/y")', '..\\..\\foo\\bar\\bat')
         tester('ntpath.relpath("//conky/mountpoint/a", "//conky/mountpoint/b/c")', '..\\..\\a')

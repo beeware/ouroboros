@@ -1011,14 +1011,19 @@ class FileHandler(StreamHandler):
         """
         self.acquire()
         try:
-            if self.stream:
-                self.flush()
-                if hasattr(self.stream, "close"):
-                    self.stream.close()
-                self.stream = None
-            # Issue #19523: call unconditionally to
-            # prevent a handler leak when delay is set
-            StreamHandler.close(self)
+            try:
+                if self.stream:
+                    try:
+                        self.flush()
+                    finally:
+                        stream = self.stream
+                        self.stream = None
+                        if hasattr(stream, "close"):
+                            stream.close()
+            finally:
+                # Issue #19523: call unconditionally to
+                # prevent a handler leak when delay is set
+                StreamHandler.close(self)
         finally:
             self.release()
 
@@ -1723,7 +1728,7 @@ def basicConfig(**kwargs):
     _acquireLock()
     try:
         if len(root.handlers) == 0:
-            handlers = kwargs.get("handlers")
+            handlers = kwargs.pop("handlers", None)
             if handlers is None:
                 if "stream" in kwargs and "filename" in kwargs:
                     raise ValueError("'stream' and 'filename' should not be "
@@ -1733,28 +1738,31 @@ def basicConfig(**kwargs):
                     raise ValueError("'stream' or 'filename' should not be "
                                      "specified together with 'handlers'")
             if handlers is None:
-                filename = kwargs.get("filename")
+                filename = kwargs.pop("filename", None)
+                mode = kwargs.pop("filemode", 'a')
                 if filename:
-                    mode = kwargs.get("filemode", 'a')
                     h = FileHandler(filename, mode)
                 else:
-                    stream = kwargs.get("stream")
+                    stream = kwargs.pop("stream", None)
                     h = StreamHandler(stream)
                 handlers = [h]
-            dfs = kwargs.get("datefmt", None)
-            style = kwargs.get("style", '%')
+            dfs = kwargs.pop("datefmt", None)
+            style = kwargs.pop("style", '%')
             if style not in _STYLES:
                 raise ValueError('Style must be one of: %s' % ','.join(
                                  _STYLES.keys()))
-            fs = kwargs.get("format", _STYLES[style][1])
+            fs = kwargs.pop("format", _STYLES[style][1])
             fmt = Formatter(fs, dfs, style)
             for h in handlers:
                 if h.formatter is None:
                     h.setFormatter(fmt)
                 root.addHandler(h)
-            level = kwargs.get("level")
+            level = kwargs.pop("level", None)
             if level is not None:
                 root.setLevel(level)
+            if kwargs:
+                keys = ', '.join(kwargs.keys())
+                raise ValueError('Unrecognised argument(s): %s' % keys)
     finally:
         _releaseLock()
 

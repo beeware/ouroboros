@@ -44,6 +44,7 @@ class BaseTest:
     """Basic bookkeeping required for testing."""
 
     def setUp(self):
+        self.old_unittest_module = unittest.case.warnings
         # The __warningregistry__ needs to be in a pristine state for tests
         # to work properly.
         if '__warningregistry__' in globals():
@@ -55,10 +56,15 @@ class BaseTest:
         # The 'warnings' module must be explicitly set so that the proper
         # interaction between _warnings and 'warnings' can be controlled.
         sys.modules['warnings'] = self.module
+        # Ensure that unittest.TestCase.assertWarns() uses the same warnings
+        # module than warnings.catch_warnings(). Otherwise,
+        # warnings.catch_warnings() will be unable to remove the added filter.
+        unittest.case.warnings = self.module
         super(BaseTest, self).setUp()
 
     def tearDown(self):
         sys.modules['warnings'] = original_warnings
+        unittest.case.warnings = self.old_unittest_module
         super(BaseTest, self).tearDown()
 
 class PublicAPITests(BaseTest):
@@ -246,6 +252,18 @@ class FilterTests(BaseTest):
             self.module.warn(text)
             self.assertEqual(str(w[-1].message), text)
             self.assertTrue(w[-1].category is UserWarning)
+
+    def test_mutate_filter_list(self):
+        class X:
+            def match(self, a):
+                L[:] = []
+
+        L = [("default",X(),UserWarning,X(),0) for i in range(2)]
+        with original_warnings.catch_warnings(record=True,
+                module=self.module) as w:
+            self.module.filters = L
+            self.module.warn_explicit(UserWarning("b"), None, "f.py", 42)
+            self.assertEqual(str(w[-1].message), "b")
 
 class CFilterTests(FilterTests, unittest.TestCase):
     module = c_warnings
@@ -630,6 +648,15 @@ class _WarningsTests(BaseTest, unittest.TestCase):
                 self.assertTrue(len(w))
         finally:
             globals_dict['__file__'] = oldfile
+
+    def test_stderr_none(self):
+        rc, stdout, stderr = assert_python_ok("-c",
+            "import sys; sys.stderr = None; "
+            "import warnings; warnings.simplefilter('always'); "
+            "warnings.warn('Warning!')")
+        self.assertEqual(stdout, b'')
+        self.assertNotIn(b'Warning!', stderr)
+        self.assertNotIn(b'Error', stderr)
 
 
 class WarningsDisplayTests(BaseTest):

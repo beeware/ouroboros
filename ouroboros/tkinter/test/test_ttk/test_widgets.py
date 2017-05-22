@@ -1,6 +1,6 @@
 import unittest
 import tkinter
-from tkinter import ttk
+from tkinter import ttk, TclError
 from test.support import requires
 import sys
 
@@ -20,7 +20,7 @@ class StandardTtkOptionsTests(StandardOptionsTests):
         widget = self.create()
         self.assertEqual(widget['class'], '')
         errmsg='attempt to change read-only option'
-        if get_tk_patchlevel() < (8, 6, 0): # actually this was changed in 8.6b3
+        if get_tk_patchlevel() < (8, 6, 0, 'beta', 3):
             errmsg='Attempt to change read-only option'
         self.checkInvalidParam(widget, 'class', 'Foo', errmsg=errmsg)
         widget2 = self.create(class_='Foo')
@@ -352,7 +352,8 @@ class ComboboxTest(AbstractWidgetTest, unittest.TestCase):
                         expected=('mon', 'tue', 'wed', 'thur'))
         self.checkParam(self.combo, 'values', ('mon', 'tue', 'wed', 'thur'))
         self.checkParam(self.combo, 'values', (42, 3.14, '', 'any string'))
-        self.checkParam(self.combo, 'values', '', expected=())
+        self.checkParam(self.combo, 'values', '',
+                        expected='' if get_tk_patchlevel() < (8, 5, 10) else ())
 
         self.combo['values'] = ['a', 1, 'c']
 
@@ -551,7 +552,7 @@ class PanedWindowTest(AbstractWidgetTest, unittest.TestCase):
         widget = self.create()
         self.assertEqual(str(widget['orient']), 'vertical')
         errmsg='attempt to change read-only option'
-        if get_tk_patchlevel() < (8, 6, 0): # actually this was changed in 8.6b3
+        if get_tk_patchlevel() < (8, 6, 0, 'beta', 3):
             errmsg='Attempt to change read-only option'
         self.checkInvalidParam(widget, 'orient', 'horizontal',
                 errmsg=errmsg)
@@ -1125,7 +1126,8 @@ class TreeviewTest(AbstractWidgetTest, unittest.TestCase):
         self.checkParam(widget, 'columns', 'a b c',
                         expected=('a', 'b', 'c'))
         self.checkParam(widget, 'columns', ('a', 'b', 'c'))
-        self.checkParam(widget, 'columns', ())
+        self.checkParam(widget, 'columns', (),
+                        expected='' if get_tk_patchlevel() < (8, 5, 10) else ())
 
     def test_displaycolumns(self):
         widget = self.create()
@@ -1562,6 +1564,21 @@ class TreeviewTest(AbstractWidgetTest, unittest.TestCase):
         self.assertEqual(str(self.tv.tag_configure('test', foreground=None)),
             'blue')
         self.assertIsInstance(self.tv.tag_configure('test'), dict)
+
+    def test_tag_has(self):
+        item1 = self.tv.insert('', 'end', text='Item 1', tags=['tag1'])
+        item2 = self.tv.insert('', 'end', text='Item 2', tags=['tag2'])
+        self.assertRaises(TypeError, self.tv.tag_has)
+        self.assertRaises(TclError, self.tv.tag_has, 'tag1', 'non-existing')
+        self.assertTrue(self.tv.tag_has('tag1', item1))
+        self.assertFalse(self.tv.tag_has('tag1', item2))
+        self.assertFalse(self.tv.tag_has('tag2', item1))
+        self.assertTrue(self.tv.tag_has('tag2', item2))
+        self.assertFalse(self.tv.tag_has('tag3', item1))
+        self.assertFalse(self.tv.tag_has('tag3', item2))
+        self.assertEqual(self.tv.tag_has('tag1'), (item1,))
+        self.assertEqual(self.tv.tag_has('tag2'), (item2,))
+        self.assertEqual(self.tv.tag_has('tag3'), ())
 
 
 @add_standard_options(StandardTtkOptionsTests)

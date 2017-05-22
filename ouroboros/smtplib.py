@@ -518,8 +518,8 @@ class SMTP:
         Raises SMTPDataError if there is an unexpected reply to the
         DATA command; the return value from this method is the final
         response code received when the all data is sent.  If msg
-        is a string, lone '\r' and '\n' characters are converted to
-        '\r\n' characters.  If msg is bytes, it is transmitted as is.
+        is a string, lone '\\r' and '\\n' characters are converted to
+        '\\r\\n' characters.  If msg is bytes, it is transmitted as is.
         """
         self.putcmd("data")
         (code, repl) = self.getreply()
@@ -684,9 +684,8 @@ class SMTP:
             if context is None:
                 context = ssl._create_stdlib_context(certfile=certfile,
                                                      keyfile=keyfile)
-            server_hostname = self._host if ssl.HAS_SNI else None
             self.sock = context.wrap_socket(self.sock,
-                                            server_hostname=server_hostname)
+                                            server_hostname=self._host)
             self.file = None
             # RFC 3207:
             # The client MUST discard any knowledge obtained from
@@ -696,6 +695,11 @@ class SMTP:
             self.ehlo_resp = None
             self.esmtp_features = {}
             self.does_esmtp = 0
+        else:
+            # RFC 3207:
+            # 501 Syntax error (no parameters allowed)
+            # 454 TLS not available due to temporary reason
+            raise SMTPResponseException(resp, reply)
         return (resp, reply)
 
     def sendmail(self, from_addr, to_addrs, msg, mail_options=[],
@@ -856,12 +860,16 @@ class SMTP:
 
     def close(self):
         """Close the connection to the SMTP server."""
-        if self.file:
-            self.file.close()
-        self.file = None
-        if self.sock:
-            self.sock.close()
-        self.sock = None
+        try:
+            file = self.file
+            self.file = None
+            if file:
+                file.close()
+        finally:
+            sock = self.sock
+            self.sock = None
+            if sock:
+                sock.close()
 
     def quit(self):
         """Terminate the SMTP session."""
@@ -915,9 +923,8 @@ if _have_ssl:
                 print('connect:', (host, port), file=stderr)
             new_socket = socket.create_connection((host, port), timeout,
                     self.source_address)
-            server_hostname = self._host if ssl.HAS_SNI else None
             new_socket = self.context.wrap_socket(new_socket,
-                                                  server_hostname=server_hostname)
+                                                  server_hostname=self._host)
             return new_socket
 
     __all__.append("SMTP_SSL")

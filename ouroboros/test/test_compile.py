@@ -1,9 +1,11 @@
 import math
+import os
 import unittest
 import sys
 import _ast
+import tempfile
 import types
-from test import support
+from test import support, script_helper
 
 class TestSpecifics(unittest.TestCase):
 
@@ -492,6 +494,26 @@ if 1:
         self.assertInvalidSingle('f()\nxy # blah\nblah()')
         self.assertInvalidSingle('x = 5 # comment\nx = 6\n')
 
+    def test_particularly_evil_undecodable(self):
+        # Issue 24022
+        src = b'0000\x00\n00000000000\n\x00\n\x9e\n'
+        with tempfile.TemporaryDirectory() as tmpd:
+            fn = os.path.join(tmpd, "bad.py")
+            with open(fn, "wb") as fp:
+                fp.write(src)
+            res = script_helper.run_python_until_end(fn)[0]
+        self.assertIn(b"Non-UTF-8", res.err)
+
+    def test_yet_more_evil_still_undecodable(self):
+        # Issue #25388
+        src = b"#\x00\n#\xfd\n"
+        with tempfile.TemporaryDirectory() as tmpd:
+            fn = os.path.join(tmpd, "bad.py")
+            with open(fn, "wb") as fp:
+                fp.write(src)
+            res = script_helper.run_python_until_end(fn)[0]
+        self.assertIn(b"Non-UTF-8", res.err)
+
     @support.cpython_only
     def test_compiler_recursion_limit(self):
         # Expected limit is sys.getrecursionlimit() * the scaling factor
@@ -517,6 +539,27 @@ if 1:
         check_limit("a", ".b")
         check_limit("a", "[0]")
         check_limit("a", "*a")
+
+    def test_null_terminated(self):
+        # The source code is null-terminated internally, but bytes-like
+        # objects are accepted, which could be not terminated.
+        # Exception changed from TypeError to ValueError in 3.5
+        with self.assertRaisesRegex(Exception, "cannot contain null"):
+            compile("123\x00", "<dummy>", "eval")
+        with self.assertRaisesRegex(Exception, "cannot contain null"):
+            compile(memoryview(b"123\x00"), "<dummy>", "eval")
+        code = compile(memoryview(b"123\x00")[1:-1], "<dummy>", "eval")
+        self.assertEqual(eval(code), 23)
+        code = compile(memoryview(b"1234")[1:-1], "<dummy>", "eval")
+        self.assertEqual(eval(code), 23)
+        code = compile(memoryview(b"$23$")[1:-1], "<dummy>", "eval")
+        self.assertEqual(eval(code), 23)
+
+        # Also test when eval() and exec() do the compilation step
+        self.assertEqual(eval(memoryview(b"1234")[1:-1]), 23)
+        namespace = dict()
+        exec(memoryview(b"ax = 123")[1:-1], namespace)
+        self.assertEqual(namespace['x'], 12)
 
 
 class TestStackSize(unittest.TestCase):

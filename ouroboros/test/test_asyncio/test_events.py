@@ -12,9 +12,6 @@ try:
     import ssl
 except ImportError:
     ssl = None
-    HAS_SNI = False
-else:
-    from ssl import HAS_SNI
 import subprocess
 import sys
 import threading
@@ -23,13 +20,17 @@ import errno
 import unittest
 from unittest import mock
 import weakref
-from test import support  # find_unused_port, IPV6_ENABLED, TEST_HOME_DIR
 
 
 import asyncio
 from asyncio import proactor_events
 from asyncio import selector_events
+from asyncio import sslproto
 from asyncio import test_utils
+try:
+    from test import support
+except ImportError:
+    from asyncio import test_support as support
 
 
 def data_file(filename):
@@ -56,6 +57,17 @@ ONLYCERT = data_file('ssl_cert.pem')
 ONLYKEY = data_file('ssl_key.pem')
 SIGNED_CERTFILE = data_file('keycert3.pem')
 SIGNING_CA = data_file('pycacert.pem')
+PEERCERT = {'serialNumber': 'B09264B1F2DA21D1',
+            'version': 1,
+            'subject': ((('countryName', 'XY'),),
+                    (('localityName', 'Castle Anthrax'),),
+                    (('organizationName', 'Python Software Foundation'),),
+                    (('commonName', 'localhost'),)),
+            'issuer': ((('countryName', 'XY'),),
+                    (('organizationName', 'Python Software Foundation CA'),),
+                    (('commonName', 'our-ca-server'),)),
+            'notAfter': 'Nov 13 19:47:07 2022 GMT',
+            'notBefore': 'Jan  4 19:47:07 2013 GMT'}
 
 
 class MyBaseProto(asyncio.Protocol):
@@ -229,7 +241,8 @@ class EventLoopTestsMixin:
 
     def tearDown(self):
         # just in case if we have transport close callbacks
-        test_utils.run_briefly(self.loop)
+        if not self.loop.is_closed():
+            test_utils.run_briefly(self.loop)
 
         self.loop.close()
         gc.collect()
@@ -594,27 +607,100 @@ class EventLoopTestsMixin:
             self.assertGreater(pr.nbytes, 0)
             tr.close()
 
+    def check_ssl_extra_info(self, client, check_sockname=True,
+                             peername=None, peercert={}):
+        if check_sockname:
+            self.assertIsNotNone(client.get_extra_info('sockname'))
+        if peername:
+            self.assertEqual(peername,
+                             client.get_extra_info('peername'))
+        else:
+            self.assertIsNotNone(client.get_extra_info('peername'))
+        self.assertEqual(peercert,
+                         client.get_extra_info('peercert'))
+
+        # test SSL cipher
+        cipher = client.get_extra_info('cipher')
+        self.assertIsInstance(cipher, tuple)
+        self.assertEqual(len(cipher), 3, cipher)
+        self.assertIsInstance(cipher[0], str)
+        self.assertIsInstance(cipher[1], str)
+        self.assertIsInstance(cipher[2], int)
+
+        # test SSL object
+        sslobj = client.get_extra_info('ssl_object')
+        self.assertIsNotNone(sslobj)
+        self.assertEqual(sslobj.compression(),
+                         client.get_extra_info('compression'))
+        self.assertEqual(sslobj.cipher(),
+                         client.get_extra_info('cipher'))
+        self.assertEqual(sslobj.getpeercert(),
+                         client.get_extra_info('peercert'))
+        self.assertEqual(sslobj.compression(),
+                         client.get_extra_info('compression'))
+
     def _basetest_create_ssl_connection(self, connection_fut,
-                                        check_sockname=True):
+                                        check_sockname=True,
+                                        peername=None):
         tr, pr = self.loop.run_until_complete(connection_fut)
         self.assertIsInstance(tr, asyncio.Transport)
         self.assertIsInstance(pr, asyncio.Protocol)
         self.assertTrue('ssl' in tr.__class__.__name__.lower())
-        if check_sockname:
-            self.assertIsNotNone(tr.get_extra_info('sockname'))
+        self.check_ssl_extra_info(tr, check_sockname, peername)
         self.loop.run_until_complete(pr.done)
         self.assertGreater(pr.nbytes, 0)
         tr.close()
 
+    def _test_create_ssl_connection(self, httpd, create_connection,
+                                    check_sockname=True, peername=None):
+        conn_fut = create_connection(ssl=test_utils.dummy_ssl_context())
+        self._basetest_create_ssl_connection(conn_fut, check_sockname,
+                                             peername)
+
+        # ssl.Purpose was introduced in Python 3.4
+        if hasattr(ssl, 'Purpose'):
+            def _dummy_ssl_create_context(purpose=ssl.Purpose.SERVER_AUTH, *,
+                                          cafile=None, capath=None,
+                                          cadata=None):
+                """
+                A ssl.create_default_context() replacement that doesn't enable
+                cert validation.
+                """
+                self.assertEqual(purpose, ssl.Purpose.SERVER_AUTH)
+                return test_utils.dummy_ssl_context()
+
+            # With ssl=True, ssl.create_default_context() should be called
+            with mock.patch('ssl.create_default_context',
+                            side_effect=_dummy_ssl_create_context) as m:
+                conn_fut = create_connection(ssl=True)
+                self._basetest_create_ssl_connection(conn_fut, check_sockname,
+                                                     peername)
+                self.assertEqual(m.call_count, 1)
+
+        # With the real ssl.create_default_context(), certificate
+        # validation will fail
+        with self.assertRaises(ssl.SSLError) as cm:
+            conn_fut = create_connection(ssl=True)
+            # Ignore the "SSL handshake failed" log in debug mode
+            with test_utils.disable_logger():
+                self._basetest_create_ssl_connection(conn_fut, check_sockname,
+                                                     peername)
+
+        self.assertEqual(cm.exception.reason, 'CERTIFICATE_VERIFY_FAILED')
+
     @unittest.skipIf(ssl is None, 'No ssl module')
     def test_create_ssl_connection(self):
         with test_utils.run_test_server(use_ssl=True) as httpd:
-            conn_fut = self.loop.create_connection(
+            create_connection = functools.partial(
+                self.loop.create_connection,
                 lambda: MyProto(loop=self.loop),
-                *httpd.address,
-                ssl=test_utils.dummy_ssl_context())
+                *httpd.address)
+            self._test_create_ssl_connection(httpd, create_connection,
+                                             peername=httpd.address)
 
-            self._basetest_create_ssl_connection(conn_fut)
+    def test_legacy_create_ssl_connection(self):
+        with test_utils.force_legacy_ssl_support():
+            self.test_create_ssl_connection()
 
     @unittest.skipIf(ssl is None, 'No ssl module')
     @unittest.skipUnless(hasattr(socket, 'AF_UNIX'), 'No UNIX Sockets')
@@ -624,13 +710,18 @@ class EventLoopTestsMixin:
         check_sockname = not osx_tiger()
 
         with test_utils.run_test_unix_server(use_ssl=True) as httpd:
-            conn_fut = self.loop.create_unix_connection(
-                lambda: MyProto(loop=self.loop),
-                httpd.address,
-                ssl=test_utils.dummy_ssl_context(),
+            create_connection = functools.partial(
+                self.loop.create_unix_connection,
+                lambda: MyProto(loop=self.loop), httpd.address,
                 server_hostname='127.0.0.1')
 
-            self._basetest_create_ssl_connection(conn_fut, check_sockname)
+            self._test_create_ssl_connection(httpd, create_connection,
+                                             check_sockname,
+                                             peername=httpd.address)
+
+    def test_legacy_create_ssl_unix_connection(self):
+        with test_utils.force_legacy_ssl_support():
+            self.test_create_ssl_unix_connection()
 
     def test_create_connection_local_addr(self):
         with test_utils.run_test_server() as httpd:
@@ -652,6 +743,40 @@ class EventLoopTestsMixin:
                 self.loop.run_until_complete(f)
             self.assertEqual(cm.exception.errno, errno.EADDRINUSE)
             self.assertIn(str(httpd.address), cm.exception.strerror)
+
+    @mock.patch('asyncio.base_events.socket')
+    def create_server_multiple_hosts(self, family, hosts, mock_sock):
+        @asyncio.coroutine
+        def getaddrinfo(host, port, *args, **kw):
+            if family == socket.AF_INET:
+                return [[family, socket.SOCK_STREAM, 6, '', (host, port)]]
+            else:
+                return [[family, socket.SOCK_STREAM, 6, '', (host, port, 0, 0)]]
+
+        def getaddrinfo_task(*args, **kwds):
+            return asyncio.Task(getaddrinfo(*args, **kwds), loop=self.loop)
+
+        if family == socket.AF_INET:
+            mock_sock.socket().getsockbyname.side_effect = [(host, 80)
+                                                            for host in hosts]
+        else:
+            mock_sock.socket().getsockbyname.side_effect = [(host, 80, 0, 0)
+                                                            for host in hosts]
+        self.loop.getaddrinfo = getaddrinfo_task
+        self.loop._start_serving = mock.Mock()
+        self.loop._stop_serving = mock.Mock()
+        f = self.loop.create_server(lambda: MyProto(self.loop), hosts, 80)
+        server = self.loop.run_until_complete(f)
+        self.addCleanup(server.close)
+        server_hosts = [sock.getsockbyname()[0] for sock in server.sockets]
+        self.assertEqual(server_hosts, hosts)
+
+    def test_create_server_multiple_hosts_ipv4(self):
+        self.create_server_multiple_hosts(socket.AF_INET,
+                                          ['1.2.3.4', '5.6.7.8'])
+
+    def test_create_server_multiple_hosts_ipv6(self):
+        self.create_server_multiple_hosts(socket.AF_INET6, ['::1', '::2'])
 
     def test_create_server(self):
         proto = MyProto(self.loop)
@@ -687,6 +812,32 @@ class EventLoopTestsMixin:
         client.close()
 
         # close server
+        server.close()
+
+    @unittest.skipUnless(hasattr(socket, 'SO_REUSEPORT'), 'No SO_REUSEPORT')
+    def test_create_server_reuse_port(self):
+        proto = MyProto(self.loop)
+        f = self.loop.create_server(
+            lambda: proto, '0.0.0.0', 0)
+        server = self.loop.run_until_complete(f)
+        self.assertEqual(len(server.sockets), 1)
+        sock = server.sockets[0]
+        self.assertFalse(
+            sock.getsockopt(
+                socket.SOL_SOCKET, socket.SO_REUSEPORT))
+        server.close()
+
+        test_utils.run_briefly(self.loop)
+
+        proto = MyProto(self.loop)
+        f = self.loop.create_server(
+            lambda: proto, '0.0.0.0', 0, reuse_port=True)
+        server = self.loop.run_until_complete(f)
+        self.assertEqual(len(server.sockets), 1)
+        sock = server.sockets[0]
+        self.assertTrue(
+            sock.getsockopt(
+                socket.SOL_SOCKET, socket.SO_REUSEPORT))
         server.close()
 
     def _make_unix_server(self, factory, **kwargs):
@@ -776,9 +927,7 @@ class EventLoopTestsMixin:
         self.assertEqual(3, proto.nbytes)
 
         # extra info is available
-        self.assertIsNotNone(proto.transport.get_extra_info('sockname'))
-        self.assertEqual('127.0.0.1',
-                         proto.transport.get_extra_info('peername')[0])
+        self.check_ssl_extra_info(client, peername=(host, port))
 
         # close connection
         proto.transport.close()
@@ -791,6 +940,10 @@ class EventLoopTestsMixin:
 
         # stop serving
         server.close()
+
+    def test_legacy_create_server_ssl(self):
+        with test_utils.force_legacy_ssl_support():
+            self.test_create_server_ssl()
 
     @unittest.skipIf(ssl is None, 'No ssl module')
     @unittest.skipUnless(hasattr(socket, 'AF_UNIX'), 'No UNIX Sockets')
@@ -823,8 +976,11 @@ class EventLoopTestsMixin:
         # stop serving
         server.close()
 
+    def test_legacy_create_unix_server_ssl(self):
+        with test_utils.force_legacy_ssl_support():
+            self.test_create_unix_server_ssl()
+
     @unittest.skipIf(ssl is None, 'No ssl module')
-    @unittest.skipUnless(HAS_SNI, 'No SNI support in ssl module')
     def test_create_server_ssl_verify_failed(self):
         proto = MyProto(loop=self.loop)
         server, host, port = self._make_ssl_server(
@@ -836,20 +992,28 @@ class EventLoopTestsMixin:
         if hasattr(sslcontext_client, 'check_hostname'):
             sslcontext_client.check_hostname = True
 
+
         # no CA loaded
         f_c = self.loop.create_connection(MyProto, host, port,
                                           ssl=sslcontext_client)
-        with test_utils.disable_logger():
-            with self.assertRaisesRegex(ssl.SSLError,
-                                        'certificate verify failed '):
-                self.loop.run_until_complete(f_c)
+        with mock.patch.object(self.loop, 'call_exception_handler'):
+            with test_utils.disable_logger():
+                with self.assertRaisesRegex(ssl.SSLError,
+                                            '(?i)certificate.verify.failed '):
+                    self.loop.run_until_complete(f_c)
+
+            # execute the loop to log the connection error
+            test_utils.run_briefly(self.loop)
 
         # close connection
         self.assertIsNone(proto.transport)
         server.close()
 
+    def test_legacy_create_server_ssl_verify_failed(self):
+        with test_utils.force_legacy_ssl_support():
+            self.test_create_server_ssl_verify_failed()
+
     @unittest.skipIf(ssl is None, 'No ssl module')
-    @unittest.skipUnless(HAS_SNI, 'No SNI support in ssl module')
     @unittest.skipUnless(hasattr(socket, 'AF_UNIX'), 'No UNIX Sockets')
     def test_create_unix_server_ssl_verify_failed(self):
         proto = MyProto(loop=self.loop)
@@ -866,17 +1030,25 @@ class EventLoopTestsMixin:
         f_c = self.loop.create_unix_connection(MyProto, path,
                                                ssl=sslcontext_client,
                                                server_hostname='invalid')
-        with test_utils.disable_logger():
-            with self.assertRaisesRegex(ssl.SSLError,
-                                        'certificate verify failed '):
-                self.loop.run_until_complete(f_c)
+        with mock.patch.object(self.loop, 'call_exception_handler'):
+            with test_utils.disable_logger():
+                with self.assertRaisesRegex(ssl.SSLError,
+                                            '(?i)certificate.verify.failed '):
+                    self.loop.run_until_complete(f_c)
+
+            # execute the loop to log the connection error
+            test_utils.run_briefly(self.loop)
 
         # close connection
         self.assertIsNone(proto.transport)
         server.close()
 
+
+    def test_legacy_create_unix_server_ssl_verify_failed(self):
+        with test_utils.force_legacy_ssl_support():
+            self.test_create_unix_server_ssl_verify_failed()
+
     @unittest.skipIf(ssl is None, 'No ssl module')
-    @unittest.skipUnless(HAS_SNI, 'No SNI support in ssl module')
     def test_create_server_ssl_match_failed(self):
         proto = MyProto(loop=self.loop)
         server, host, port = self._make_ssl_server(
@@ -893,18 +1065,22 @@ class EventLoopTestsMixin:
         # incorrect server_hostname
         f_c = self.loop.create_connection(MyProto, host, port,
                                           ssl=sslcontext_client)
-        with test_utils.disable_logger():
-            with self.assertRaisesRegex(
-                    ssl.CertificateError,
-                    "hostname '127.0.0.1' doesn't match 'localhost'"):
-                self.loop.run_until_complete(f_c)
+        with mock.patch.object(self.loop, 'call_exception_handler'):
+            with test_utils.disable_logger():
+                with self.assertRaisesRegex(
+                        ssl.CertificateError,
+                        "hostname '127.0.0.1' doesn't match 'localhost'"):
+                    self.loop.run_until_complete(f_c)
 
         # close connection
         proto.transport.close()
         server.close()
 
+    def test_legacy_create_server_ssl_match_failed(self):
+        with test_utils.force_legacy_ssl_support():
+            self.test_create_server_ssl_match_failed()
+
     @unittest.skipIf(ssl is None, 'No ssl module')
-    @unittest.skipUnless(HAS_SNI, 'No SNI support in ssl module')
     @unittest.skipUnless(hasattr(socket, 'AF_UNIX'), 'No UNIX Sockets')
     def test_create_unix_server_ssl_verified(self):
         proto = MyProto(loop=self.loop)
@@ -928,9 +1104,13 @@ class EventLoopTestsMixin:
         proto.transport.close()
         client.close()
         server.close()
+        self.loop.run_until_complete(proto.done)
+
+    def test_legacy_create_unix_server_ssl_verified(self):
+        with test_utils.force_legacy_ssl_support():
+            self.test_create_unix_server_ssl_verified()
 
     @unittest.skipIf(ssl is None, 'No ssl module')
-    @unittest.skipUnless(HAS_SNI, 'No SNI support in ssl module')
     def test_create_server_ssl_verified(self):
         proto = MyProto(loop=self.loop)
         server, host, port = self._make_ssl_server(
@@ -949,10 +1129,19 @@ class EventLoopTestsMixin:
                                           server_hostname='localhost')
         client, pr = self.loop.run_until_complete(f_c)
 
+        # extra info is available
+        self.check_ssl_extra_info(client,peername=(host, port),
+                                  peercert=PEERCERT)
+
         # close connection
         proto.transport.close()
         client.close()
         server.close()
+        self.loop.run_until_complete(proto.done)
+
+    def test_legacy_create_server_ssl_verified(self):
+        with test_utils.force_legacy_ssl_support():
+            self.test_create_server_ssl_verified()
 
     def test_create_server_sock(self):
         proto = asyncio.Future(loop=self.loop)
@@ -1100,6 +1289,32 @@ class EventLoopTestsMixin:
         self.loop.run_until_complete(client.done)
         self.assertEqual('CLOSED', client.state)
         server.transport.close()
+
+    def test_create_datagram_endpoint_sock(self):
+        sock = None
+        local_address = ('127.0.0.1', 0)
+        infos = self.loop.run_until_complete(
+            self.loop.getaddrinfo(
+                *local_address, type=socket.SOCK_DGRAM))
+        for family, type, proto, cname, address in infos:
+            try:
+                sock = socket.socket(family=family, type=type, proto=proto)
+                sock.setblocking(False)
+                sock.bind(address)
+            except:
+                pass
+            else:
+                break
+        else:
+            assert False, 'Can not create socket.'
+
+        f = self.loop.create_connection(
+            lambda: MyDatagramProto(loop=self.loop), sock=sock)
+        tr, pr = self.loop.run_until_complete(f)
+        self.assertIsInstance(tr, asyncio.Transport)
+        self.assertIsInstance(pr, MyDatagramProto)
+        tr.close()
+        self.loop.run_until_complete(pr.done)
 
     def test_internal_fds(self):
         loop = self.create_event_loop()
@@ -1409,6 +1624,38 @@ class EventLoopTestsMixin:
         with self.assertRaises(RuntimeError):
             self.loop.run_until_complete(coro)
 
+    def test_close(self):
+        self.loop.close()
+
+        @asyncio.coroutine
+        def test():
+            pass
+
+        func = lambda: False
+        coro = test()
+        self.addCleanup(coro.close)
+
+        # operation blocked when the loop is closed
+        with self.assertRaises(RuntimeError):
+            self.loop.run_forever()
+        with self.assertRaises(RuntimeError):
+            fut = asyncio.Future(loop=self.loop)
+            self.loop.run_until_complete(fut)
+        with self.assertRaises(RuntimeError):
+            self.loop.call_soon(func)
+        with self.assertRaises(RuntimeError):
+            self.loop.call_soon_threadsafe(func)
+        with self.assertRaises(RuntimeError):
+            self.loop.call_later(1.0, func)
+        with self.assertRaises(RuntimeError):
+            self.loop.call_at(self.loop.time() + .0, func)
+        with self.assertRaises(RuntimeError):
+            self.loop.run_in_executor(None, func)
+        with self.assertRaises(RuntimeError):
+            self.loop.create_task(coro)
+        with self.assertRaises(RuntimeError):
+            self.loop.add_signal_handler(signal.SIGTERM, func)
+
 
 class SubprocessTestsMixin:
 
@@ -1440,9 +1687,10 @@ class SubprocessTestsMixin:
         stdin = transp.get_pipe_transport(0)
         stdin.write(b'Python The Winner')
         self.loop.run_until_complete(proto.got_data[1].wait())
-        transp.close()
+        with test_utils.disable_logger():
+            transp.close()
         self.loop.run_until_complete(proto.completed)
-        self.check_terminated(proto.returncode)
+        self.check_killed(proto.returncode)
         self.assertEqual(b'Python The Winner', proto.data[1])
 
     def test_subprocess_interactive(self):
@@ -1456,21 +1704,20 @@ class SubprocessTestsMixin:
         self.loop.run_until_complete(proto.connected)
         self.assertEqual('CONNECTED', proto.state)
 
-        try:
-            stdin = transp.get_pipe_transport(0)
-            stdin.write(b'Python ')
-            self.loop.run_until_complete(proto.got_data[1].wait())
-            proto.got_data[1].clear()
-            self.assertEqual(b'Python ', proto.data[1])
+        stdin = transp.get_pipe_transport(0)
+        stdin.write(b'Python ')
+        self.loop.run_until_complete(proto.got_data[1].wait())
+        proto.got_data[1].clear()
+        self.assertEqual(b'Python ', proto.data[1])
 
-            stdin.write(b'The Winner')
-            self.loop.run_until_complete(proto.got_data[1].wait())
-            self.assertEqual(b'Python The Winner', proto.data[1])
-        finally:
+        stdin.write(b'The Winner')
+        self.loop.run_until_complete(proto.got_data[1].wait())
+        self.assertEqual(b'Python The Winner', proto.data[1])
+
+        with test_utils.disable_logger():
             transp.close()
-
         self.loop.run_until_complete(proto.completed)
-        self.check_terminated(proto.returncode)
+        self.check_killed(proto.returncode)
 
     def test_subprocess_shell(self):
         connect = self.loop.subprocess_shell(
@@ -1486,6 +1733,7 @@ class SubprocessTestsMixin:
         self.assertTrue(all(f.done() for f in proto.disconnects.values()))
         self.assertEqual(proto.data[1].rstrip(b'\r\n'), b'Python')
         self.assertEqual(proto.data[2], b'')
+        transp.close()
 
     def test_subprocess_exitcode(self):
         connect = self.loop.subprocess_shell(
@@ -1495,6 +1743,7 @@ class SubprocessTestsMixin:
         self.assertIsInstance(proto, MySubprocessProtocol)
         self.loop.run_until_complete(proto.completed)
         self.assertEqual(7, proto.returncode)
+        transp.close()
 
     def test_subprocess_close_after_finish(self):
         connect = self.loop.subprocess_shell(
@@ -1522,6 +1771,7 @@ class SubprocessTestsMixin:
         transp.kill()
         self.loop.run_until_complete(proto.completed)
         self.check_killed(proto.returncode)
+        transp.close()
 
     def test_subprocess_terminate(self):
         prog = os.path.join(os.path.dirname(__file__), 'echo.py')
@@ -1536,6 +1786,7 @@ class SubprocessTestsMixin:
         transp.terminate()
         self.loop.run_until_complete(proto.completed)
         self.check_terminated(proto.returncode)
+        transp.close()
 
     @unittest.skipIf(sys.platform == 'win32', "Don't have SIGHUP")
     def test_subprocess_send_signal(self):
@@ -1551,6 +1802,7 @@ class SubprocessTestsMixin:
         transp.send_signal(signal.SIGHUP)
         self.loop.run_until_complete(proto.completed)
         self.assertEqual(-signal.SIGHUP, proto.returncode)
+        transp.close()
 
     def test_subprocess_stderr(self):
         prog = os.path.join(os.path.dirname(__file__), 'echo2.py')
@@ -1623,9 +1875,10 @@ class SubprocessTestsMixin:
             # GetLastError()==ERROR_INVALID_NAME on Windows!?!  (Using
             # WriteFile() we get ERROR_BROKEN_PIPE as expected.)
             self.assertEqual(b'ERR:OSError', proto.data[2])
-        transp.close()
+        with test_utils.disable_logger():
+            transp.close()
         self.loop.run_until_complete(proto.completed)
-        self.check_terminated(proto.returncode)
+        self.check_killed(proto.returncode)
 
     def test_subprocess_wait_no_same_group(self):
         # start the new process in a new session
@@ -1685,20 +1938,36 @@ if sys.platform == 'win32':
         def create_event_loop(self):
             return asyncio.ProactorEventLoop()
 
-        def test_create_ssl_connection(self):
-            raise unittest.SkipTest("IocpEventLoop incompatible with SSL")
+        if not sslproto._is_sslproto_available():
+            def test_create_ssl_connection(self):
+                raise unittest.SkipTest("need python 3.5 (ssl.MemoryBIO)")
 
-        def test_create_server_ssl(self):
-            raise unittest.SkipTest("IocpEventLoop incompatible with SSL")
+            def test_create_server_ssl(self):
+                raise unittest.SkipTest("need python 3.5 (ssl.MemoryBIO)")
 
-        def test_create_server_ssl_verify_failed(self):
-            raise unittest.SkipTest("IocpEventLoop incompatible with SSL")
+            def test_create_server_ssl_verify_failed(self):
+                raise unittest.SkipTest("need python 3.5 (ssl.MemoryBIO)")
 
-        def test_create_server_ssl_match_failed(self):
-            raise unittest.SkipTest("IocpEventLoop incompatible with SSL")
+            def test_create_server_ssl_match_failed(self):
+                raise unittest.SkipTest("need python 3.5 (ssl.MemoryBIO)")
 
-        def test_create_server_ssl_verified(self):
-            raise unittest.SkipTest("IocpEventLoop incompatible with SSL")
+            def test_create_server_ssl_verified(self):
+                raise unittest.SkipTest("need python 3.5 (ssl.MemoryBIO)")
+
+        def test_legacy_create_ssl_connection(self):
+            raise unittest.SkipTest("IocpEventLoop incompatible with legacy SSL")
+
+        def test_legacy_create_server_ssl(self):
+            raise unittest.SkipTest("IocpEventLoop incompatible with legacy SSL")
+
+        def test_legacy_create_server_ssl_verify_failed(self):
+            raise unittest.SkipTest("IocpEventLoop incompatible with legacy SSL")
+
+        def test_legacy_create_server_ssl_match_failed(self):
+            raise unittest.SkipTest("IocpEventLoop incompatible with legacy SSL")
+
+        def test_legacy_create_server_ssl_verified(self):
+            raise unittest.SkipTest("IocpEventLoop incompatible with legacy SSL")
 
         def test_reader_callback(self):
             raise unittest.SkipTest("IocpEventLoop does not have add_reader()")
@@ -1890,9 +2159,17 @@ class HandleTests(test_utils.TestCase):
 
         # cancelled handle
         h.cancel()
-        self.assertEqual(repr(h),
-                        '<Handle cancelled noop(1, 2) at %s:%s created at %s:%s>'
-                        % (filename, lineno, create_filename, create_lineno))
+        self.assertEqual(
+            repr(h),
+            '<Handle cancelled noop(1, 2) at %s:%s created at %s:%s>'
+            % (filename, lineno, create_filename, create_lineno))
+
+        # double cancellation won't overwrite _repr
+        h.cancel()
+        self.assertEqual(
+            repr(h),
+            '<Handle cancelled noop(1, 2) at %s:%s created at %s:%s>'
+            % (filename, lineno, create_filename, create_lineno))
 
     def test_handle_source_traceback(self):
         loop = asyncio.get_event_loop_policy().new_event_loop()
@@ -2186,14 +2463,14 @@ class PolicyTests(unittest.TestCase):
     def test_get_event_loop_after_set_none(self):
         policy = asyncio.DefaultEventLoopPolicy()
         policy.set_event_loop(None)
-        self.assertRaises(AssertionError, policy.get_event_loop)
+        self.assertRaises(RuntimeError, policy.get_event_loop)
 
     @mock.patch('asyncio.events.threading.current_thread')
     def test_get_event_loop_thread(self, m_current_thread):
 
         def f():
             policy = asyncio.DefaultEventLoopPolicy()
-            self.assertRaises(AssertionError, policy.get_event_loop)
+            self.assertRaises(RuntimeError, policy.get_event_loop)
 
         th = threading.Thread(target=f)
         th.start()

@@ -11,6 +11,10 @@ import textwrap
 from io import StringIO, BytesIO
 from itertools import chain
 from random import choice
+try:
+    from threading import Thread
+except ImportError:
+    from dummy_threading import Thread
 
 import email
 import email.policy
@@ -34,7 +38,7 @@ from email import iterators
 from email import base64mime
 from email import quoprimime
 
-from test.support import unlink
+from test.support import unlink, start_threads
 from test.test_email import openfile, TestEmailBase
 
 # These imports are documented to work, but we are testing them using a
@@ -3033,7 +3037,7 @@ class TestMiscellaneous(TestEmailBase):
         # issue 1690608.  email.utils.formataddr() should be rfc2047 aware.
         name = "H\u00e4ns W\u00fcrst"
         addr = 'person@dom.ain'
-        # A object without a header_encode method:
+        # An object without a header_encode method:
         bad_charset = object()
         self.assertRaises(AttributeError, utils.formataddr, (name, addr),
             bad_charset)
@@ -3151,6 +3155,28 @@ Foo
         eq = self.assertEqual
         addrs = utils.getaddresses(['User ((nested comment)) <foo@bar.com>'])
         eq(addrs[0][1], 'foo@bar.com')
+
+    def test_make_msgid_collisions(self):
+        # Test make_msgid uniqueness, even with multiple threads
+        class MsgidsThread(Thread):
+            def run(self):
+                # generate msgids for 3 seconds
+                self.msgids = []
+                append = self.msgids.append
+                make_msgid = utils.make_msgid
+                try:
+                    clock = time.monotonic
+                except AttributeError:
+                    clock = time.time
+                tfin = clock() + 3.0
+                while clock() < tfin:
+                    append(make_msgid(domain='testdomain-string'))
+
+        threads = [MsgidsThread() for i in range(5)]
+        with start_threads(threads):
+            pass
+        all_ids = sum([t.msgids for t in threads], [])
+        self.assertEqual(len(set(all_ids)), len(all_ids))
 
     def test_utils_quote_unquote(self):
         eq = self.assertEqual
@@ -3388,6 +3414,12 @@ class TestFeedParsers(TestEmailBase):
         for chunk in chunks:
             feedparser.feed(chunk)
         return feedparser.close()
+
+    def test_empty_header_name_handled(self):
+        # Issue 19996
+        msg = self.parse("First: val\n: bad\nSecond: val")
+        self.assertEqual(msg['First'], 'val')
+        self.assertEqual(msg['Second'], 'val')
 
     def test_newlines(self):
         m = self.parse(['a:\nb:\rc:\r\nd:\n'])

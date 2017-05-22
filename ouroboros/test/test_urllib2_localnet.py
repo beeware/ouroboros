@@ -545,12 +545,12 @@ class TestUrlopen(unittest.TestCase):
 
     def test_https(self):
         handler = self.start_https_server()
-        data = self.urlopen("https://localhost:%s/bizarre" % handler.port)
+        context = ssl.create_default_context(cafile=CERT_localhost)
+        data = self.urlopen("https://localhost:%s/bizarre" % handler.port, context=context)
         self.assertEqual(data, b"we care a bit")
 
     def test_https_with_cafile(self):
         handler = self.start_https_server(certfile=CERT_localhost)
-        import ssl
         # Good cert
         data = self.urlopen("https://localhost:%s/bizarre" % handler.port,
                             cafile=CERT_localhost)
@@ -584,7 +584,8 @@ class TestUrlopen(unittest.TestCase):
         context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
         context.set_servername_callback(cb_sni)
         handler = self.start_https_server(context=context, certfile=CERT_localhost)
-        self.urlopen("https://localhost:%s" % handler.port)
+        context = ssl.create_default_context(cafile=CERT_localhost)
+        self.urlopen("https://localhost:%s" % handler.port, context=context)
         self.assertEqual(sni_name, "localhost")
 
     def test_sending_headers(self):

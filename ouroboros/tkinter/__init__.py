@@ -391,6 +391,11 @@ class BooleanVar(Variable):
         """
         Variable.__init__(self, master, value, name)
 
+    def set(self, value):
+        """Set the variable to VALUE."""
+        return self._tk.globalsetvar(self._name, self._tk.getboolean(value))
+    initialize = set
+
     def get(self):
         """Return the value of the variable as a bool."""
         try:
@@ -1112,7 +1117,7 @@ class Misc:
 
         return self._bind(('bind', className), sequence, func, add, 0)
     def unbind_class(self, className, sequence):
-        """Unbind for a all widgets with bindtag CLASSNAME for event SEQUENCE
+        """Unbind for all widgets with bindtag CLASSNAME for event SEQUENCE
         all functions."""
         self.tk.call('bind', className , sequence, '')
     def mainloop(self, n=0):
@@ -1729,7 +1734,7 @@ class Wm:
 
         On X, the images are arranged into the _NET_WM_ICON X property,
         which most modern window managers support. An icon specified by
-        wm_iconbitmap may exist simuultaneously.
+        wm_iconbitmap may exist simultaneously.
 
         On Macintosh, this currently does nothing."""
         if default:

@@ -1,11 +1,24 @@
 '''Run human tests of Idle's window, dialog, and popup widgets.
 
 run(*tests)
-Run each callable in tests after finding the matching test spec in this file.
-If there are none, run an htest for each spec dict in this file after finding
-the matching callable in the module named in the spec.
+Create a master Tk window.  Within that, run each callable in tests
+after finding the matching test spec in this file.  If tests is empty,
+run an htest for each spec dict in this file after finding the matching
+callable in the module named in the spec.  Close the window to skip or
+end the test.
 
-In a tested module, let X be a global name bound to a widget callable.
+In a tested module, let X be a global name bound to a callable (class
+or function) whose .__name__ attrubute is also X (the usual situation).
+The first parameter of X must be 'parent'.  When called, the parent
+argument will be the root window.  X must create a child Toplevel
+window (or subclass thereof).  The Toplevel may be a test widget or
+dialog, in which case the callable is the corresonding class.  Or the
+Toplevel may contain the widget to be tested or set up a context in
+which a test widget is invoked.  In this latter case, the callable is a
+wrapper function that sets up the Toplevel and other objects.  Wrapper
+function names, such as _editor_window', should start with '_'.
+
+
 End the module with
 
 if __name__ == '__main__':
@@ -13,13 +26,25 @@ if __name__ == '__main__':
     from idlelib.idle_test.htest import run
     run(X)
 
-The X object must have a .__name__ attribute and a 'parent' parameter.
-X will often be a widget class, but a callable instance with .__name__
-or a wrapper function also work. The name of wrapper functions, like
-'_editor_window', should start with '_'.
+To have wrapper functions and test invocation code ignored by coveragepy
+reports, put '# htest #' on the def statement header line.
 
-This file must contain a matching instance of the following template,
-with X.__name__ prepended, as in '_editor_window_spec ...'.
+def _wrapper(parent):  # htest #
+
+Also make sure that the 'if __name__' line matches the above.  Then have
+make sure that .coveragerc includes the following.
+
+[report]
+exclude_lines =
+    .*# htest #
+    if __name__ == .__main__.:
+
+(The "." instead of "'" is intentional and necessary.)
+
+
+To run any X, this file must contain a matching instance of the
+following template, with X.__name__ prepended to '_spec'.
+When all tests are run, the prefix is use to get X.
 
 _spec = {
     'file': '',
@@ -27,18 +52,19 @@ _spec = {
     'msg': ""
     }
 
-file (no .py): used in run() to import the file and get X.
-kwds: passed to X (**kwds), after 'parent' is added, to initialize X.
-title: an example; used for some widgets, delete if not.
-msg: displayed in a master window. Hints as to how the user might
-  test the widget. Close the window to skip or end the test.
+file (no .py): run() imports file.py.
+kwds: augmented with {'parent':root} and passed to X as **kwds.
+title: an example kwd; some widgets need this, delete if not.
+msg: master window hints about testing the widget.
 
-Modules not being tested at the moment:
+
+Modules and classes not being tested at the moment:
 PyShell.PyShellEditorWindow
 Debugger.Debugger
 AutoCompleteWindow.AutoCompleteWindow
 OutputWindow.OutputWindow (indirectly being tested with grep test)
 '''
+
 from importlib import import_module
 from idlelib.macosxSupport import _initializeTkVariantTests
 import tkinter as tk
@@ -79,19 +105,21 @@ _color_delegator_spec = {
 
 ConfigDialog_spec = {
     'file': 'configDialog',
-    'kwds': {'title': 'Settings',
+    'kwds': {'title': 'ConfigDialogTest',
              '_htest': True,},
     'msg': "IDLE preferences dialog.\n"
            "In the 'Fonts/Tabs' tab, changing font face, should update the "
            "font face of the text in the area below it.\nIn the "
            "'Highlighting' tab, try different color schemes. Clicking "
            "items in the sample program should update the choices above it."
-           "\nIn the 'Keys' and 'General' tab, test settings of interest."
+           "\nIn the 'Keys', 'General' and 'Extensions' tabs, test settings"
+           "of interest."
            "\n[Ok] to close the dialog.[Apply] to apply the settings and "
            "and [Cancel] to revert all changes.\nRe-run the test to ensure "
            "changes made have persisted."
     }
 
+# TODO Improve message
 _dyn_option_menu_spec = {
     'file': 'dynOptionMenuWidget',
     'kwds': {},
@@ -100,10 +128,12 @@ _dyn_option_menu_spec = {
            "Select one of the many options in the 'new option set'."
     }
 
+# TODO edit wrapper
 _editor_window_spec = {
    'file': 'EditorWindow',
     'kwds': {},
-    'msg': "Test editor functions of interest."
+    'msg': "Test editor functions of interest.\n"
+           "Best to close editor first."
     }
 
 GetCfgSectionNameDialog_spec = {
@@ -142,7 +172,7 @@ GetKeysDialog_spec = {
            "<nothing> is invalid.\n"
            "No modifier key is invalid.\n"
            "Shift key with [a-z],[0-9], function key, move key, tab, space"
-           "is invalid.\nNo validitity checking if advanced key binding "
+           "is invalid.\nNo validity checking if advanced key binding "
            "entry is used."
     }
 
@@ -156,19 +186,14 @@ _grep_dialog_spec = {
            "should open that file \nin a new EditorWindow."
     }
 
-_help_dialog_spec = {
-    'file': 'EditorWindow',
-    'kwds': {},
-    'msg': "If the help text displays, this works.\n"
-           "Text is selectable. Window is scrollable."
-    }
-
 _io_binding_spec = {
     'file': 'IOBinding',
     'kwds': {},
-    'msg': "Test the following bindings\n"
-           "<Control-o> to display open window from file dialog.\n"
-           "<Control-s> to save the file\n"
+    'msg': "Test the following bindings.\n"
+           "<Control-o> to open file from dialog.\n"
+           "Edit the file.\n"
+           "<Control-s> to save the file.\n"
+           "Check that changes were saved by opening the file elsewhere."
     }
 
 _multi_call_spec = {
@@ -239,6 +264,13 @@ _scrolled_list_spec = {
            "Selecting (clicking) or double clicking an item "
            "prints the name to the console or Idle shell.\n"
            "Right clicking an item will display a popup."
+    }
+
+show_idlehelp_spec = {
+    'file': 'help',
+    'kwds': {},
+    'msg': "If the help text displays, this works.\n"
+           "Text is selectable. Window is scrollable."
     }
 
 _stack_viewer_spec = {
