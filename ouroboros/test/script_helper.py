@@ -1,6 +1,7 @@
 # Common utility functions used by various script execution tests
 #  e.g. test_cmd_line, test_cmd_line_script and test_runpy
 
+import collections
 import importlib
 import sys
 import os
@@ -15,18 +16,58 @@ import zipfile
 from importlib.util import source_from_cache
 from test.support import make_legacy_pyc, strip_python_stderr, temp_dir
 
+
+# Cached result of the expensive test performed in the function below.
+__cached_interp_requires_environment = None
+
+def _interpreter_requires_environment():
+    """
+    Returns True if our sys.executable interpreter requires environment
+    variables in order to be able to run at all.
+
+    This is designed to be used with @unittest.skipIf() to annotate tests
+    that need to use an assert_python*() function to launch an isolated
+    mode (-I) or no environment mode (-E) sub-interpreter process.
+
+    A normal build & test does not run into this situation but it can happen
+    when trying to run the standard library test suite from an interpreter that
+    doesn't have an obvious home with Python's current home finding logic.
+
+    Setting PYTHONHOME is one way to get most of the testsuite to run in that
+    situation.  PYTHONPATH or PYTHONUSERSITE are other common environment
+    variables that might impact whether or not the interpreter can start.
+    """
+    global __cached_interp_requires_environment
+    if __cached_interp_requires_environment is None:
+        # Try running an interpreter with -E to see if it works or not.
+        try:
+            subprocess.check_call([sys.executable, '-E',
+                                   '-c', 'import sys; sys.exit(0)'])
+        except subprocess.CalledProcessError:
+            __cached_interp_requires_environment = True
+        else:
+            __cached_interp_requires_environment = False
+
+    return __cached_interp_requires_environment
+
+
+_PythonRunResult = collections.namedtuple("_PythonRunResult",
+                                          ("rc", "out", "err"))
+
+
 # Executing the interpreter in a subprocess
-def _assert_python(expected_success, *args, **env_vars):
+def run_python_until_end(*args, **env_vars):
+    env_required = _interpreter_requires_environment()
     if '__isolated' in env_vars:
         isolated = env_vars.pop('__isolated')
     else:
-        isolated = not env_vars
+        isolated = not env_vars and not env_required
     cmd_line = [sys.executable, '-X', 'faulthandler']
     if isolated:
         # isolated mode: ignore Python environment variables, ignore user
         # site-packages, and don't add the current directory to sys.path
         cmd_line.append('-I')
-    elif not env_vars:
+    elif not env_vars and not env_required:
         # ignore Python environment variables
         cmd_line.append('-E')
     # Need to preserve the original environment, for in-place testing of
@@ -49,11 +90,16 @@ def _assert_python(expected_success, *args, **env_vars):
         p.stderr.close()
     rc = p.returncode
     err = strip_python_stderr(err)
-    if (rc and expected_success) or (not rc and not expected_success):
+    return _PythonRunResult(rc, out, err), cmd_line
+
+def _assert_python(expected_success, *args, **env_vars):
+    res, cmd_line = run_python_until_end(*args, **env_vars)
+    if (res.rc and expected_success) or (not res.rc and not expected_success):
         raise AssertionError(
-            "Process return code is %d, "
-            "stderr follows:\n%s" % (rc, err.decode('ascii', 'ignore')))
-    return rc, out, err
+            "Process return code is %d, command line was: %r, "
+            "stderr follows:\n%s" % (res.rc, cmd_line,
+                                     res.err.decode('ascii', 'ignore')))
+    return res
 
 def assert_python_ok(*args, **env_vars):
     """
@@ -61,7 +107,7 @@ def assert_python_ok(*args, **env_vars):
     variables `env_vars` succeeds (rc == 0) and return a (return code, stdout,
     stderr) tuple.
 
-    If the __cleanenv keyword is set, env_vars is used a fresh environment.
+    If the __cleanenv keyword is set, env_vars is used as a fresh environment.
 
     Python is started in isolated mode (command line option -I),
     except if the __isolated keyword is set to False.

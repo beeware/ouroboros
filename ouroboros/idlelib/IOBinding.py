@@ -1,18 +1,16 @@
+import codecs
+from codecs import BOM_UTF8
 import os
-import types
+import re
 import shlex
 import sys
-import codecs
 import tempfile
+
 import tkinter.filedialog as tkFileDialog
 import tkinter.messagebox as tkMessageBox
-import re
-from tkinter import *
 from tkinter.simpledialog import askstring
 
-from idlelib.configHandler import idleConf
 
-from codecs import BOM_UTF8
 
 # Try setting the locale, so that we can find out
 # what encoding to use
@@ -218,7 +216,7 @@ class IOBinding:
                 f.seek(0)
                 bytes = f.read()
         except OSError as msg:
-            tkMessageBox.showerror("I/O Error", str(msg), master=self.text)
+            tkMessageBox.showerror("I/O Error", str(msg), parent=self.text)
             return False
         chars, converted = self._decode(two_lines, bytes)
         if chars is None:
@@ -267,7 +265,7 @@ class IOBinding:
                 title="Error loading the file",
                 message="The encoding '%s' is not known to this Python "\
                 "installation. The file may not display correctly" % name,
-                master = self.text)
+                parent = self.text)
             enc = None
         except UnicodeDecodeError:
             return None, False
@@ -322,7 +320,7 @@ class IOBinding:
                   title="Save On Close",
                   message=message,
                   default=tkMessageBox.YES,
-                  master=self.text)
+                  parent=self.text)
         if confirm:
             reply = "yes"
             self.save(None)
@@ -382,7 +380,7 @@ class IOBinding:
             return True
         except OSError as msg:
             tkMessageBox.showerror("I/O Error", str(msg),
-                                   master=self.text)
+                                   parent=self.text)
             return False
 
     def encode(self, chars):
@@ -419,7 +417,7 @@ class IOBinding:
         tkMessageBox.showerror(
             "I/O Error",
             "%s.\nSaving as UTF-8" % failed,
-            master = self.text)
+            parent = self.text)
         # Fallback: save as UTF-8, with BOM - ignoring the incorrect
         # declared encoding
         return BOM_UTF8 + chars.encode("utf-8")
@@ -434,7 +432,7 @@ class IOBinding:
                   title="Print",
                   message="Print to Default Printer",
                   default=tkMessageBox.OK,
-                  master=self.text)
+                  parent=self.text)
         if not confirm:
             self.text.focus_set()
             return "break"
@@ -471,10 +469,10 @@ class IOBinding:
                          status + output
             if output:
                 output = "Printing command: %s\n" % repr(command) + output
-                tkMessageBox.showerror("Print status", output, master=self.text)
+                tkMessageBox.showerror("Print status", output, parent=self.text)
         else:  #no printing for this platform
             message = "Printing is not enabled for this platform: %s" % platform
-            tkMessageBox.showinfo("Print status", message, master=self.text)
+            tkMessageBox.showinfo("Print status", message, parent=self.text)
         if tempfilename:
             os.unlink(tempfilename)
         return "break"
@@ -493,7 +491,7 @@ class IOBinding:
     def askopenfile(self):
         dir, base = self.defaultfilename("open")
         if not self.opendialog:
-            self.opendialog = tkFileDialog.Open(master=self.text,
+            self.opendialog = tkFileDialog.Open(parent=self.text,
                                                 filetypes=self.filetypes)
         filename = self.opendialog.show(initialdir=dir, initialfile=base)
         return filename
@@ -514,7 +512,7 @@ class IOBinding:
         dir, base = self.defaultfilename("save")
         if not self.savedialog:
             self.savedialog = tkFileDialog.SaveAs(
-                    master=self.text,
+                    parent=self.text,
                     filetypes=self.filetypes,
                     defaultextension=self.defaultextension)
         filename = self.savedialog.show(initialdir=dir, initialfile=base)
@@ -525,8 +523,11 @@ class IOBinding:
         if self.editwin.flist:
             self.editwin.update_recent_files_list(filename)
 
-def _io_binding(parent):
-    root = Tk()
+def _io_binding(parent):  # htest #
+    from tkinter import Toplevel, Text
+    from idlelib.configHandler import idleConf
+
+    root = Toplevel(parent)
     root.title("Test IOBinding")
     width, height, x, y = list(map(int, re.split('[x+]', parent.geometry())))
     root.geometry("+%d+%d"%(x, y + 150))
@@ -548,7 +549,7 @@ def _io_binding(parent):
     text.pack()
     text.focus_set()
     editwin = MyEditWin(text)
-    io = IOBinding(editwin)
+    IOBinding(editwin)
 
 if __name__ == "__main__":
     from idlelib.idle_test.htest import run

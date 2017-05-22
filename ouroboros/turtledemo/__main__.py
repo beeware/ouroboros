@@ -14,7 +14,7 @@
   (1) How to use the demo viewer.
 
   Select a demoscript from the example menu.
-  The (syntax coloured) source code appears in the left
+  The (syntax colored) source code appears in the left
   source code window. IT CANNOT BE EDITED, but ONLY VIEWED!
 
   The demo viewer windows can be resized. The divider between text
@@ -344,6 +344,8 @@ class DemoWindow(object):
             else:
                 self.state = DONE
         except turtle.Terminator:
+            if self.root is None:
+                return
             self.state = DONE
             result = "stopped!"
         if self.state == DONE:
@@ -369,7 +371,9 @@ class DemoWindow(object):
         turtle.TurtleScreen._RUNNING = False
 
     def _destroy(self):
+        turtle.TurtleScreen._RUNNING = False
         self.root.destroy()
+        self.root = None
 
 
 def main():

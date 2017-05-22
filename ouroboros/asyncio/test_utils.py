@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover
     ssl = None
 
 from . import base_events
+from . import compat
 from . import events
 from . import futures
 from . import selectors
@@ -71,12 +72,13 @@ def run_until(loop, pred, timeout=30):
 
 
 def run_once(loop):
-    """loop.stop() schedules _raise_stop_error()
-    and run_forever() runs until _raise_stop_error() callback.
-    this wont work if test waits for some IO events, because
-    _raise_stop_error() runs before any of io events callbacks.
+    """Legacy API to run once through the event loop.
+
+    This is the recommended pattern for test code.  It will poll the
+    selector once and run all callbacks scheduled in response to I/O
+    events.
     """
-    loop.stop()
+    loop.call_soon(loop.stop)
     loop.run_forever()
 
 
@@ -90,6 +92,13 @@ class SilentWSGIRequestHandler(WSGIRequestHandler):
 
 
 class SilentWSGIServer(WSGIServer):
+
+    request_timeout = 2
+
+    def get_request(self):
+        request, client_addr = super().get_request()
+        request.settimeout(self.request_timeout)
+        return request, client_addr
 
     def handle_error(self, request, client_address):
         pass
@@ -138,7 +147,8 @@ def _run_test_server(*, address, use_ssl=False, server_cls, server_ssl_cls):
     httpd = server_class(address, SilentWSGIRequestHandler)
     httpd.set_app(app)
     httpd.address = httpd.server_address
-    server_thread = threading.Thread(target=httpd.serve_forever)
+    server_thread = threading.Thread(
+        target=lambda: httpd.serve_forever(poll_interval=0.05))
     server_thread.start()
     try:
         yield httpd
@@ -160,12 +170,15 @@ if hasattr(socket, 'AF_UNIX'):
 
     class UnixWSGIServer(UnixHTTPServer, WSGIServer):
 
+        request_timeout = 2
+
         def server_bind(self):
             UnixHTTPServer.server_bind(self)
             self.setup_environ()
 
         def get_request(self):
             request, client_addr = super().get_request()
+            request.settimeout(self.request_timeout)
             # Code in the stdlib expects that get_request
             # will return a socket and a tuple (host, port).
             # However, this isn't true for UNIX sockets,
@@ -296,6 +309,7 @@ class TestLoop(base_events.BaseEventLoop):
             self._time += advance
 
     def close(self):
+        super().close()
         if self._check_on_close:
             try:
                 self._gen.send(0)
@@ -404,6 +418,20 @@ class TestCase(unittest.TestCase):
     def tearDown(self):
         events.set_event_loop(None)
 
+        # Detect CPython bug #23353: ensure that yield/yield-from is not used
+        # in an except block of a generator
+        self.assertEqual(sys.exc_info(), (None, None, None))
+
+    if not compat.PY34:
+        # Python 3.3 compatibility
+        def subTest(self, *args, **kwargs):
+            class EmptyCM:
+                def __enter__(self):
+                    pass
+                def __exit__(self, *exc):
+                    pass
+            return EmptyCM()
+
 
 @contextlib.contextmanager
 def disable_logger():
@@ -418,8 +446,18 @@ def disable_logger():
     finally:
         logger.setLevel(old_level)
 
-def mock_nonblocking_socket():
+
+def mock_nonblocking_socket(proto=socket.IPPROTO_TCP, type=socket.SOCK_STREAM,
+                            family=socket.AF_INET):
     """Create a mock of a non-blocking socket."""
-    sock = mock.Mock(socket.socket)
+    sock = mock.MagicMock(socket.socket)
+    sock.proto = proto
+    sock.type = type
+    sock.family = family
     sock.gettimeout.return_value = 0.0
     return sock
+
+
+def force_legacy_ssl_support():
+    return mock.patch('asyncio.sslproto._is_sslproto_available',
+                      return_value=False)

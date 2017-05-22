@@ -8,23 +8,22 @@ import re
 import sys
 from collections import Sequence
 from contextlib import contextmanager
-from errno import EINVAL, ENOENT
+from errno import EINVAL, ENOENT, ENOTDIR
 from operator import attrgetter
 from stat import S_ISDIR, S_ISLNK, S_ISREG, S_ISSOCK, S_ISBLK, S_ISCHR, S_ISFIFO
 from urllib.parse import quote_from_bytes as urlquote_from_bytes
 
 
 supports_symlinks = True
-try:
+if os.name == 'nt':
     import nt
-except ImportError:
-    nt = None
-else:
     if sys.getwindowsversion()[:2] >= (6, 0):
         from nt import _getfinalpathname
     else:
         supports_symlinks = False
         _getfinalpathname = None
+else:
+    nt = None
 
 
 __all__ = [
@@ -74,6 +73,10 @@ class _Flavour(object):
                     # parts. This makes the result of parsing e.g.
                     # ("C:", "/", "a") reasonably intuitive.
                     for part in it:
+                        if not part:
+                            continue
+                        if altsep:
+                            part = part.replace(altsep, sep)
                         drv = self.splitroot(part)[0]
                         if drv:
                             break
@@ -110,7 +113,7 @@ class _WindowsFlavour(_Flavour):
     has_drv = True
     pathmod = ntpath
 
-    is_supported = (nt is not None)
+    is_supported = (os.name == 'nt')
 
     drive_letters = (
         set(chr(x) for x in range(ord('a'), ord('z') + 1)) |
@@ -451,12 +454,15 @@ class _PreciseSelector(_Selector):
         _Selector.__init__(self, child_parts)
 
     def _select_from(self, parent_path, is_dir, exists, listdir):
-        if not is_dir(parent_path):
+        try:
+            if not is_dir(parent_path):
+                return
+            path = parent_path._make_child_relpath(self.name)
+            if exists(path):
+                for p in self.successor._select_from(path, is_dir, exists, listdir):
+                    yield p
+        except PermissionError:
             return
-        path = parent_path._make_child_relpath(self.name)
-        if exists(path):
-            for p in self.successor._select_from(path, is_dir, exists, listdir):
-                yield p
 
 
 class _WildcardSelector(_Selector):
@@ -466,15 +472,19 @@ class _WildcardSelector(_Selector):
         _Selector.__init__(self, child_parts)
 
     def _select_from(self, parent_path, is_dir, exists, listdir):
-        if not is_dir(parent_path):
+        try:
+            if not is_dir(parent_path):
+                return
+            cf = parent_path._flavour.casefold
+            for name in listdir(parent_path):
+                casefolded = cf(name)
+                if self.pat.match(casefolded):
+                    path = parent_path._make_child_relpath(name)
+                    for p in self.successor._select_from(path, is_dir, exists, listdir):
+                        yield p
+        except PermissionError:
             return
-        cf = parent_path._flavour.casefold
-        for name in listdir(parent_path):
-            casefolded = cf(name)
-            if self.pat.match(casefolded):
-                path = parent_path._make_child_relpath(name)
-                for p in self.successor._select_from(path, is_dir, exists, listdir):
-                    yield p
+
 
 
 class _RecursiveWildcardSelector(_Selector):
@@ -484,26 +494,32 @@ class _RecursiveWildcardSelector(_Selector):
 
     def _iterate_directories(self, parent_path, is_dir, listdir):
         yield parent_path
-        for name in listdir(parent_path):
-            path = parent_path._make_child_relpath(name)
-            if is_dir(path):
-                for p in self._iterate_directories(path, is_dir, listdir):
-                    yield p
+        try:
+            for name in listdir(parent_path):
+                path = parent_path._make_child_relpath(name)
+                if is_dir(path) and not path.is_symlink():
+                    for p in self._iterate_directories(path, is_dir, listdir):
+                        yield p
+        except PermissionError:
+            return
 
     def _select_from(self, parent_path, is_dir, exists, listdir):
-        if not is_dir(parent_path):
+        try:
+            if not is_dir(parent_path):
+                return
+            with _cached(listdir) as listdir:
+                yielded = set()
+                try:
+                    successor_select = self.successor._select_from
+                    for starting_point in self._iterate_directories(parent_path, is_dir, listdir):
+                        for p in successor_select(starting_point, is_dir, exists, listdir):
+                            if p not in yielded:
+                                yield p
+                                yielded.add(p)
+                finally:
+                    yielded.clear()
+        except PermissionError:
             return
-        with _cached(listdir) as listdir:
-            yielded = set()
-            try:
-                successor_select = self.successor._select_from
-                for starting_point in self._iterate_directories(parent_path, is_dir, listdir):
-                    for p in successor_select(starting_point, is_dir, exists, listdir):
-                        if p not in yielded:
-                            yield p
-                            yielded.add(p)
-            finally:
-                yielded.clear()
 
 
 #
@@ -665,9 +681,6 @@ class PurePath(object):
         if not isinstance(other, PurePath):
             return NotImplemented
         return self._cparts == other._cparts and self._flavour is other._flavour
-
-    def __ne__(self, other):
-        return not self == other
 
     def __hash__(self):
         try:
@@ -1187,7 +1200,7 @@ class Path(PurePath):
         try:
             self.stat()
         except OSError as e:
-            if e.errno != ENOENT:
+            if e.errno not in (ENOENT, ENOTDIR):
                 raise
             return False
         return True
@@ -1199,7 +1212,7 @@ class Path(PurePath):
         try:
             return S_ISDIR(self.stat().st_mode)
         except OSError as e:
-            if e.errno != ENOENT:
+            if e.errno not in (ENOENT, ENOTDIR):
                 raise
             # Path doesn't exist or is a broken symlink
             # (see https://bitbucket.org/pitrou/pathlib/issue/12/)
@@ -1213,7 +1226,7 @@ class Path(PurePath):
         try:
             return S_ISREG(self.stat().st_mode)
         except OSError as e:
-            if e.errno != ENOENT:
+            if e.errno not in (ENOENT, ENOTDIR):
                 raise
             # Path doesn't exist or is a broken symlink
             # (see https://bitbucket.org/pitrou/pathlib/issue/12/)
@@ -1226,7 +1239,7 @@ class Path(PurePath):
         try:
             return S_ISLNK(self.lstat().st_mode)
         except OSError as e:
-            if e.errno != ENOENT:
+            if e.errno not in (ENOENT, ENOTDIR):
                 raise
             # Path doesn't exist
             return False
@@ -1238,7 +1251,7 @@ class Path(PurePath):
         try:
             return S_ISBLK(self.stat().st_mode)
         except OSError as e:
-            if e.errno != ENOENT:
+            if e.errno not in (ENOENT, ENOTDIR):
                 raise
             # Path doesn't exist or is a broken symlink
             # (see https://bitbucket.org/pitrou/pathlib/issue/12/)
@@ -1251,7 +1264,7 @@ class Path(PurePath):
         try:
             return S_ISCHR(self.stat().st_mode)
         except OSError as e:
-            if e.errno != ENOENT:
+            if e.errno not in (ENOENT, ENOTDIR):
                 raise
             # Path doesn't exist or is a broken symlink
             # (see https://bitbucket.org/pitrou/pathlib/issue/12/)
@@ -1264,7 +1277,7 @@ class Path(PurePath):
         try:
             return S_ISFIFO(self.stat().st_mode)
         except OSError as e:
-            if e.errno != ENOENT:
+            if e.errno not in (ENOENT, ENOTDIR):
                 raise
             # Path doesn't exist or is a broken symlink
             # (see https://bitbucket.org/pitrou/pathlib/issue/12/)
@@ -1277,7 +1290,7 @@ class Path(PurePath):
         try:
             return S_ISSOCK(self.stat().st_mode)
         except OSError as e:
-            if e.errno != ENOENT:
+            if e.errno not in (ENOENT, ENOTDIR):
                 raise
             # Path doesn't exist or is a broken symlink
             # (see https://bitbucket.org/pitrou/pathlib/issue/12/)

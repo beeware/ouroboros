@@ -443,6 +443,44 @@ class PosixTester(unittest.TestCase):
         else:
             self.assertTrue(stat.S_ISFIFO(posix.stat(support.TESTFN).st_mode))
 
+        # Keyword arguments are also supported
+        support.unlink(support.TESTFN)
+        try:
+            posix.mknod(path=support.TESTFN, mode=mode, device=0,
+                dir_fd=None)
+        except OSError as e:
+            self.assertIn(e.errno, (errno.EPERM, errno.EINVAL))
+
+    @unittest.skipUnless(hasattr(posix, 'stat'), 'test needs posix.stat()')
+    @unittest.skipUnless(hasattr(posix, 'makedev'), 'test needs posix.makedev()')
+    def test_makedev(self):
+        st = posix.stat(support.TESTFN)
+        dev = st.st_dev
+        self.assertIsInstance(dev, int)
+        self.assertGreaterEqual(dev, 0)
+
+        major = posix.major(dev)
+        self.assertIsInstance(major, int)
+        self.assertGreaterEqual(major, 0)
+        self.assertEqual(posix.major(dev), major)
+        self.assertRaises(TypeError, posix.major, float(dev))
+        self.assertRaises(TypeError, posix.major)
+        self.assertRaises((ValueError, OverflowError), posix.major, -1)
+
+        minor = posix.minor(dev)
+        self.assertIsInstance(minor, int)
+        self.assertGreaterEqual(minor, 0)
+        self.assertEqual(posix.minor(dev), minor)
+        self.assertRaises(TypeError, posix.minor, float(dev))
+        self.assertRaises(TypeError, posix.minor)
+        self.assertRaises((ValueError, OverflowError), posix.minor, -1)
+
+        self.assertEqual(posix.makedev(major, minor), dev)
+        self.assertRaises(TypeError, posix.makedev, float(major), minor)
+        self.assertRaises(TypeError, posix.makedev, major, float(minor))
+        self.assertRaises(TypeError, posix.makedev, major)
+        self.assertRaises(TypeError, posix.makedev)
+
     def _test_all_chown_common(self, chown_func, first_param, stat_func):
         """Common code for chown, fchown and lchown tests."""
         def check_stat(uid, gid):
@@ -1125,18 +1163,55 @@ class PosixTester(unittest.TestCase):
         """
         Test functions that call path_error2(), providing two filenames in their exceptions.
         """
-        for name in ("rename", "replace", "link", "symlink"):
+        for name in ("rename", "replace", "link"):
             function = getattr(os, name, None)
+            if function is None:
+                continue
 
-            if function:
-                for dst in ("noodly2", support.TESTFN):
-                    try:
-                        function('doesnotexistfilename', dst)
-                    except OSError as e:
-                        self.assertIn("'doesnotexistfilename' -> '{}'".format(dst), str(e))
-                        break
-                else:
-                    self.fail("No valid path_error2() test for os." + name)
+            for dst in ("noodly2", support.TESTFN):
+                try:
+                    function('doesnotexistfilename', dst)
+                except OSError as e:
+                    self.assertIn("'doesnotexistfilename' -> '{}'".format(dst), str(e))
+                    break
+            else:
+                self.fail("No valid path_error2() test for os." + name)
+
+    def test_path_with_null_character(self):
+        fn = support.TESTFN
+        fn_with_NUL = fn + '\0'
+        self.addCleanup(support.unlink, fn)
+        support.unlink(fn)
+        fd = None
+        try:
+            with self.assertRaises(TypeError):
+                fd = os.open(fn_with_NUL, os.O_WRONLY | os.O_CREAT) # raises
+        finally:
+            if fd is not None:
+                os.close(fd)
+        self.assertFalse(os.path.exists(fn))
+        self.assertRaises(TypeError, os.mkdir, fn_with_NUL)
+        self.assertFalse(os.path.exists(fn))
+        open(fn, 'wb').close()
+        self.assertRaises(TypeError, os.stat, fn_with_NUL)
+
+    def test_path_with_null_byte(self):
+        fn = os.fsencode(support.TESTFN)
+        fn_with_NUL = fn + b'\0'
+        self.addCleanup(support.unlink, fn)
+        support.unlink(fn)
+        fd = None
+        try:
+            with self.assertRaises(ValueError):
+                fd = os.open(fn_with_NUL, os.O_WRONLY | os.O_CREAT) # raises
+        finally:
+            if fd is not None:
+                os.close(fd)
+        self.assertFalse(os.path.exists(fn))
+        self.assertRaises(ValueError, os.mkdir, fn_with_NUL)
+        self.assertFalse(os.path.exists(fn))
+        open(fn, 'wb').close()
+        self.assertRaises(ValueError, os.stat, fn_with_NUL)
 
 class PosixGroupsTester(unittest.TestCase):
 

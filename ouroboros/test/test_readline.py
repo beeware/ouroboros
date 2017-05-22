@@ -16,9 +16,9 @@ class TestHistoryManipulation (unittest.TestCase):
     why the tests cover only a small subset of the interface.
     """
 
-    @unittest.skipIf(not hasattr(readline, 'clear_history'),
-                     "The history update test cannot be run because the "
-                     "clear_history method is not available.")
+    @unittest.skipUnless(hasattr(readline, "clear_history"),
+                         "The history update test cannot be run because the "
+                         "clear_history method is not available.")
     def testHistoryUpdates(self):
         readline.clear_history()
 
@@ -44,6 +44,10 @@ class TestHistoryManipulation (unittest.TestCase):
 
 
 class TestReadline(unittest.TestCase):
+
+    @unittest.skipIf(readline._READLINE_VERSION < 0x0600
+                     and "libedit" not in readline.__doc__,
+                     "not supported in this library version")
     def test_init(self):
         # Issue #19884: Ensure that the ANSI sequence "\033[1034h" is not
         # written into stdout when the readline module is imported and stdout

@@ -82,7 +82,10 @@ XXX To do:
 
 __version__ = "0.6"
 
-__all__ = ["HTTPServer", "BaseHTTPRequestHandler"]
+__all__ = [
+    "HTTPServer", "BaseHTTPRequestHandler",
+    "SimpleHTTPRequestHandler", "CGIHTTPRequestHandler",
+]
 
 import html
 import http.client
@@ -270,7 +273,7 @@ class BaseHTTPRequestHandler(socketserver.StreamRequestHandler):
         """
         self.command = None  # set in case of error on the first line
         self.request_version = version = self.default_request_version
-        self.close_connection = 1
+        self.close_connection = True
         requestline = str(self.raw_requestline, 'iso-8859-1')
         requestline = requestline.rstrip('\r\n')
         self.requestline = requestline
@@ -296,14 +299,14 @@ class BaseHTTPRequestHandler(socketserver.StreamRequestHandler):
                 self.send_error(400, "Bad request version (%r)" % version)
                 return False
             if version_number >= (1, 1) and self.protocol_version >= "HTTP/1.1":
-                self.close_connection = 0
+                self.close_connection = False
             if version_number >= (2, 0):
                 self.send_error(505,
                           "Invalid HTTP Version (%s)" % base_version_number)
                 return False
         elif len(words) == 2:
             command, path = words
-            self.close_connection = 1
+            self.close_connection = True
             if command != 'GET':
                 self.send_error(400,
                                 "Bad HTTP/0.9 request type (%r)" % command)
@@ -325,10 +328,10 @@ class BaseHTTPRequestHandler(socketserver.StreamRequestHandler):
 
         conntype = self.headers.get('Connection', "")
         if conntype.lower() == 'close':
-            self.close_connection = 1
+            self.close_connection = True
         elif (conntype.lower() == 'keep-alive' and
               self.protocol_version >= "HTTP/1.1"):
-            self.close_connection = 0
+            self.close_connection = False
         # Examine the headers and look for an Expect directive
         expect = self.headers.get('Expect', "")
         if (expect.lower() == "100-continue" and
@@ -373,7 +376,7 @@ class BaseHTTPRequestHandler(socketserver.StreamRequestHandler):
                 self.send_error(414)
                 return
             if not self.raw_requestline:
-                self.close_connection = 1
+                self.close_connection = True
                 return
             if not self.parse_request():
                 # An error code has been sent, just exit
@@ -388,12 +391,12 @@ class BaseHTTPRequestHandler(socketserver.StreamRequestHandler):
         except socket.timeout as e:
             #a read or a write timed out.  Discard this connection
             self.log_error("Request timed out: %r", e)
-            self.close_connection = 1
+            self.close_connection = True
             return
 
     def handle(self):
         """Handle multiple requests if necessary."""
-        self.close_connection = 1
+        self.close_connection = True
 
         self.handle_one_request()
         while not self.close_connection:
@@ -475,9 +478,9 @@ class BaseHTTPRequestHandler(socketserver.StreamRequestHandler):
 
         if keyword.lower() == 'connection':
             if value.lower() == 'close':
-                self.close_connection = 1
+                self.close_connection = True
             elif value.lower() == 'keep-alive':
-                self.close_connection = 0
+                self.close_connection = False
 
     def end_headers(self):
         """Send the blank line ending the MIME headers."""
@@ -701,10 +704,14 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         path = self.translate_path(self.path)
         f = None
         if os.path.isdir(path):
-            if not self.path.endswith('/'):
+            parts = urllib.parse.urlsplit(self.path)
+            if not parts.path.endswith('/'):
                 # redirect browser - doing basically what apache does
                 self.send_response(301)
-                self.send_header("Location", self.path + "/")
+                new_parts = (parts[0], parts[1], parts[2] + '/',
+                             parts[3], parts[4])
+                new_url = urllib.parse.urlunsplit(new_parts)
+                self.send_header("Location", new_url)
                 self.end_headers()
                 return None
             for index in "index.html", "index.htm":
@@ -874,19 +881,21 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 def _url_collapse_path(path):
     """
     Given a URL path, remove extra '/'s and '.' path elements and collapse
-    any '..' references and returns a colllapsed path.
+    any '..' references and returns a collapsed path.
 
     Implements something akin to RFC-2396 5.2 step 6 to parse relative paths.
     The utility of this function is limited to is_cgi method and helps
     preventing some security attacks.
 
-    Returns: A tuple of (head, tail) where tail is everything after the final /
-    and head is everything before it.  Head will always start with a '/' and,
-    if it contains anything else, never have a trailing '/'.
+    Returns: The reconstituted URL, which will always start with a '/'.
 
     Raises: IndexError if too many '..' occur within the path.
 
     """
+    # Query component should not be involved.
+    path, _, query = path.partition('?')
+    path = urllib.parse.unquote(path)
+
     # Similar to os.path.split(os.path.normpath(path)) but specific to URL
     # path semantics rather than local operating system semantics.
     path_parts = path.split('/')
@@ -906,6 +915,9 @@ def _url_collapse_path(path):
                 tail_part = ''
     else:
         tail_part = ''
+
+    if query:
+        tail_part = '?'.join((tail_part, query))
 
     splitpath = ('/' + '/'.join(head_parts), tail_part)
     collapsed_path = "/".join(splitpath)
@@ -988,7 +1000,7 @@ class CGIHTTPRequestHandler(SimpleHTTPRequestHandler):
         (and the next character is a '/' or the end of the string).
 
         """
-        collapsed_path = _url_collapse_path(urllib.parse.unquote(self.path))
+        collapsed_path = _url_collapse_path(self.path)
         dir_sep = collapsed_path.find('/', 1)
         head, tail = collapsed_path[:dir_sep], collapsed_path[dir_sep+1:]
         if head in self.cgi_directories:
@@ -1025,11 +1037,7 @@ class CGIHTTPRequestHandler(SimpleHTTPRequestHandler):
                 break
 
         # find an explicit query string, if present.
-        i = rest.rfind('?')
-        if i >= 0:
-            rest, query = rest[:i], rest[i+1:]
-        else:
-            query = ''
+        rest, _, query = rest.partition('?')
 
         # dissect the part after the directory name into a script name &
         # a possible additional path, to be stored in PATH_INFO.
@@ -1204,8 +1212,7 @@ def test(HandlerClass=BaseHTTPRequestHandler,
          ServerClass=HTTPServer, protocol="HTTP/1.0", port=8000, bind=""):
     """Test the HTTP request handler class.
 
-    This runs an HTTP server on port 8000 (or the first command line
-    argument).
+    This runs an HTTP server on port 8000 (or the port argument).
 
     """
     server_address = (bind, port)

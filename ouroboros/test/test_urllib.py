@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 from test import support
 import os
+import ssl
 import sys
 import tempfile
 from nturl2path import url2pathname, pathname2url
@@ -221,6 +222,19 @@ class ProxyTests(unittest.TestCase):
         self.env.set('NO_PROXY', 'localhost, anotherdomain.com, newdomain.com')
         self.assertTrue(urllib.request.proxy_bypass_environment('anotherdomain.com'))
 
+    def test_proxy_cgi_ignore(self):
+        try:
+            self.env.set('HTTP_PROXY', 'http://somewhere:3128')
+            proxies = urllib.request.getproxies_environment()
+            self.assertEqual('http://somewhere:3128', proxies['http'])
+            self.env.set('REQUEST_METHOD', 'GET')
+            proxies = urllib.request.getproxies_environment()
+            self.assertNotIn('http', proxies)
+        finally:
+            self.env.unset('REQUEST_METHOD')
+            self.env.unset('HTTP_PROXY')
+
+
 class urlopen_HttpTests(unittest.TestCase, FakeHTTPMixin, FakeFTPMixin):
     """Test urlopen() opening a fake http connection."""
 
@@ -379,6 +393,13 @@ Content-Type: text/html; charset=iso-8859-1
         with support.check_warnings(('',DeprecationWarning)):
             urllib.request.URLopener()
 
+    def test_cafile_and_context(self):
+        context = ssl.create_default_context()
+        with self.assertRaises(ValueError):
+            urllib.request.urlopen(
+                "https://localhost", cafile="/nonexistent/path", context=context
+            )
+
 class urlopen_DataTests(unittest.TestCase):
     """Test urlopen() opening a data URL."""
 
@@ -515,7 +536,7 @@ class urlretrieve_FileTests(unittest.TestCase):
         result = urllib.request.urlretrieve("file:%s" % support.TESTFN)
         self.assertEqual(result[0], support.TESTFN)
         self.assertIsInstance(result[1], email.message.Message,
-                              "did not get a email.message.Message instance "
+                              "did not get an email.message.Message instance "
                               "as second returned value")
 
     def test_copy(self):
@@ -1285,21 +1306,6 @@ class Pathname_Tests(unittest.TestCase):
 
 class Utility_Tests(unittest.TestCase):
     """Testcase to test the various utility functions in the urllib."""
-
-    def test_splitpasswd(self):
-        """Some of password examples are not sensible, but it is added to
-        confirming to RFC2617 and addressing issue4675.
-        """
-        self.assertEqual(('user', 'ab'),urllib.parse.splitpasswd('user:ab'))
-        self.assertEqual(('user', 'a\nb'),urllib.parse.splitpasswd('user:a\nb'))
-        self.assertEqual(('user', 'a\tb'),urllib.parse.splitpasswd('user:a\tb'))
-        self.assertEqual(('user', 'a\rb'),urllib.parse.splitpasswd('user:a\rb'))
-        self.assertEqual(('user', 'a\fb'),urllib.parse.splitpasswd('user:a\fb'))
-        self.assertEqual(('user', 'a\vb'),urllib.parse.splitpasswd('user:a\vb'))
-        self.assertEqual(('user', 'a:b'),urllib.parse.splitpasswd('user:a:b'))
-        self.assertEqual(('user', 'a b'),urllib.parse.splitpasswd('user:a b'))
-        self.assertEqual(('user 2', 'ab'),urllib.parse.splitpasswd('user 2:ab'))
-        self.assertEqual(('user+1', 'a+b'),urllib.parse.splitpasswd('user+1:a+b'))
 
     def test_thishost(self):
         """Test the urllib.request.thishost utility function returns a tuple"""

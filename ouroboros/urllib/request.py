@@ -136,15 +136,23 @@ __version__ = sys.version[:3]
 
 _opener = None
 def urlopen(url, data=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
-            *, cafile=None, capath=None, cadefault=False):
+            *, cafile=None, capath=None, cadefault=False, context=None):
     global _opener
     if cafile or capath or cadefault:
+        if context is not None:
+            raise ValueError(
+                "You can't pass both context and any of cafile, capath, and "
+                "cadefault"
+            )
         if not _have_ssl:
             raise ValueError('SSL support not available')
-        context = ssl._create_stdlib_context(cert_reqs=ssl.CERT_REQUIRED,
+        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH,
                                              cafile=cafile,
                                              capath=capath)
-        https_handler = HTTPSHandler(context=context, check_hostname=True)
+        https_handler = HTTPSHandler(context=context)
+        opener = build_opener(https_handler)
+    elif context:
+        https_handler = HTTPSHandler(context=context)
         opener = build_opener(https_handler)
     elif _opener is None:
         _opener = opener = build_opener()
@@ -221,6 +229,7 @@ def urlretrieve(url, filename=None, reporthook=None, data=None):
     return result
 
 def urlcleanup():
+    """Clean up temporary files from urlretrieve calls."""
     for temp_file in _url_tempfiles:
         try:
             os.unlink(temp_file)
@@ -2232,7 +2241,11 @@ class ftpwrapper:
         self.timeout = timeout
         self.refcount = 0
         self.keepalive = persistent
-        self.init()
+        try:
+            self.init()
+        except:
+            self.close()
+            raise
 
     def init(self):
         import ftplib
@@ -2324,6 +2337,13 @@ def getproxies_environment():
         name = name.lower()
         if value and name[-6:] == '_proxy':
             proxies[name[:-6]] = value
+
+    # CVE-2016-1000110 - If we are running as CGI script, forget HTTP_PROXY
+    # (non-all-lowercase) as it may be set from the web server by a "Proxy:"
+    # header from the client
+    if 'REQUEST_METHOD' in os.environ:
+        proxies.pop('http', None)
+
     return proxies
 
 def proxy_bypass_environment(host):

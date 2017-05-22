@@ -289,7 +289,7 @@ def _val_or_dict(tk, options, *args):
     """Format options then call Tk command with args and options and return
     the appropriate result.
 
-    If no option is specified, a dict is returned. If a option is
+    If no option is specified, a dict is returned. If an option is
     specified with the None value, the value for that option is returned.
     Otherwise, the function just sets the passed options and the caller
     shouldn't be expecting a return value anyway."""
@@ -573,7 +573,7 @@ class Widget(tkinter.Widget):
         if ret and callback:
             return callback(*args, **kw)
 
-        return bool(ret)
+        return ret
 
 
     def state(self, statespec=None):
@@ -681,7 +681,7 @@ class Entry(Widget, tkinter.Entry):
         """Force revalidation, independent of the conditions specified
         by the validate option. Returns False if validation fails, True
         if it succeeds. Sets or clears the invalid state accordingly."""
-        return bool(self.tk.getboolean(self.tk.call(self._w, "validate")))
+        return self.tk.getboolean(self.tk.call(self._w, "validate"))
 
 
 class Combobox(Entry):
@@ -1231,7 +1231,7 @@ class Treeview(Widget, tkinter.XView, tkinter.YView):
     def exists(self, item):
         """Returns True if the specified item is present in the tree,
         False otherwise."""
-        return bool(self.tk.getboolean(self.tk.call(self._w, "exists", item)))
+        return self.tk.getboolean(self.tk.call(self._w, "exists", item))
 
 
     def focus(self, item=None):
@@ -1456,7 +1456,11 @@ class Treeview(Widget, tkinter.XView, tkinter.YView):
         all items which have the specified tag.
 
         * Availability: Tk 8.6"""
-        return self.tk.getboolean(
+        if item is None:
+            return self.tk.splitlist(
+                self.tk.call(self._w, "tag", "has", tagname))
+        else:
+            return self.tk.getboolean(
                 self.tk.call(self._w, "tag", "has", tagname, item))
 
 

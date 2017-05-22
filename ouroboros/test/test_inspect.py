@@ -12,6 +12,7 @@ import re
 import shutil
 import sys
 import types
+import textwrap
 import unicodedata
 import unittest
 import unittest.mock
@@ -26,6 +27,8 @@ from test.support import MISSING_C_DOCSTRINGS
 from test.script_helper import assert_python_ok, assert_python_failure
 from test import inspect_fodder as mod
 from test import inspect_fodder2 as mod2
+
+from test.test_import import _ready_to_import
 
 
 # Functions tested in this suite:
@@ -72,6 +75,10 @@ class IsTestBase(unittest.TestCase):
 def generator_function_example(self):
     for i in range(2):
         yield i
+
+class EqualsToAll:
+    def __eq__(self, other):
+        return True
 
 class TestPredicates(IsTestBase):
     def test_sixteen(self):
@@ -432,10 +439,11 @@ class TestBuggyCases(GetSourceBase):
     def test_method_in_dynamic_class(self):
         self.assertSourceEqual(mod2.method_in_dynamic_class, 95, 97)
 
-    @unittest.skipIf(
-        not hasattr(unicodedata, '__file__') or
-            unicodedata.__file__[-4:] in (".pyc", ".pyo"),
-        "unicodedata is not an external binary module")
+    # This should not skip for CPython, but might on a repackaged python where
+    # unicodedata is not an external module, or on pypy.
+    @unittest.skipIf(not hasattr(unicodedata, '__file__') or
+                                 unicodedata.__file__.endswith('.py'),
+                     "unicodedata is not an external binary module")
     def test_findsource_binary(self):
         self.assertRaises(OSError, inspect.getsource, unicodedata)
         self.assertRaises(OSError, inspect.findsource, unicodedata)
@@ -778,11 +786,26 @@ class TestClassesAndFunctions(unittest.TestCase):
         should_find_ga = inspect.Attribute('ham', 'data', Meta, 'spam')
         self.assertIn(should_find_ga, inspect.classify_class_attrs(VA))
 
+    def test_classify_overrides_bool(self):
+        class NoBool(object):
+            def __eq__(self, other):
+                return NoBool()
+
+            def __bool__(self):
+                raise NotImplementedError(
+                    "This object does not specify a boolean value")
+
+        class HasNB(object):
+            dd = NoBool()
+
+        should_find_attr = inspect.Attribute('dd', 'data', HasNB, HasNB.dd)
+        self.assertIn(should_find_attr, inspect.classify_class_attrs(HasNB))
+
     def test_classify_metaclass_class_attribute(self):
         class Meta(type):
             fish = 'slap'
             def __dir__(self):
-                return ['__class__', '__modules__', '__name__', 'fish']
+                return ['__class__', '__module__', '__name__', 'fish']
         class Class(metaclass=Meta):
             pass
         should_find = inspect.Attribute('fish', 'data', Meta, 'slap')
@@ -1920,6 +1943,19 @@ class TestSignatureObject(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'invalid method signature'):
             self.signature(Test())
 
+    def test_signature_wrapped_bound_method(self):
+        # Issue 24298
+        class Test:
+            def m1(self, arg1, arg2=1) -> int:
+                pass
+        @functools.wraps(Test().m1)
+        def m1d(*args, **kwargs):
+            pass
+        self.assertEqual(self.signature(m1d),
+                         ((('arg1', ..., ..., "positional_or_keyword"),
+                           ('arg2', 1, ..., "positional_or_keyword")),
+                          int))
+
     def test_signature_on_classmethod(self):
         class Test:
             @classmethod
@@ -2427,47 +2463,62 @@ class TestSignatureObject(unittest.TestCase):
 
     def test_signature_equality(self):
         def foo(a, *, b:int) -> float: pass
-        self.assertNotEqual(inspect.signature(foo), 42)
+        self.assertFalse(inspect.signature(foo) == 42)
+        self.assertTrue(inspect.signature(foo) != 42)
+        self.assertTrue(inspect.signature(foo) == EqualsToAll())
+        self.assertFalse(inspect.signature(foo) != EqualsToAll())
 
         def bar(a, *, b:int) -> float: pass
-        self.assertEqual(inspect.signature(foo), inspect.signature(bar))
+        self.assertTrue(inspect.signature(foo) == inspect.signature(bar))
+        self.assertFalse(inspect.signature(foo) != inspect.signature(bar))
 
         def bar(a, *, b:int) -> int: pass
-        self.assertNotEqual(inspect.signature(foo), inspect.signature(bar))
+        self.assertFalse(inspect.signature(foo) == inspect.signature(bar))
+        self.assertTrue(inspect.signature(foo) != inspect.signature(bar))
 
         def bar(a, *, b:int): pass
-        self.assertNotEqual(inspect.signature(foo), inspect.signature(bar))
+        self.assertFalse(inspect.signature(foo) == inspect.signature(bar))
+        self.assertTrue(inspect.signature(foo) != inspect.signature(bar))
 
         def bar(a, *, b:int=42) -> float: pass
-        self.assertNotEqual(inspect.signature(foo), inspect.signature(bar))
+        self.assertFalse(inspect.signature(foo) == inspect.signature(bar))
+        self.assertTrue(inspect.signature(foo) != inspect.signature(bar))
 
         def bar(a, *, c) -> float: pass
-        self.assertNotEqual(inspect.signature(foo), inspect.signature(bar))
+        self.assertFalse(inspect.signature(foo) == inspect.signature(bar))
+        self.assertTrue(inspect.signature(foo) != inspect.signature(bar))
 
         def bar(a, b:int) -> float: pass
-        self.assertNotEqual(inspect.signature(foo), inspect.signature(bar))
+        self.assertFalse(inspect.signature(foo) == inspect.signature(bar))
+        self.assertTrue(inspect.signature(foo) != inspect.signature(bar))
         def spam(b:int, a) -> float: pass
-        self.assertNotEqual(inspect.signature(spam), inspect.signature(bar))
+        self.assertFalse(inspect.signature(spam) == inspect.signature(bar))
+        self.assertTrue(inspect.signature(spam) != inspect.signature(bar))
 
         def foo(*, a, b, c): pass
         def bar(*, c, b, a): pass
-        self.assertEqual(inspect.signature(foo), inspect.signature(bar))
+        self.assertTrue(inspect.signature(foo) == inspect.signature(bar))
+        self.assertFalse(inspect.signature(foo) != inspect.signature(bar))
 
         def foo(*, a=1, b, c): pass
         def bar(*, c, b, a=1): pass
-        self.assertEqual(inspect.signature(foo), inspect.signature(bar))
+        self.assertTrue(inspect.signature(foo) == inspect.signature(bar))
+        self.assertFalse(inspect.signature(foo) != inspect.signature(bar))
 
         def foo(pos, *, a=1, b, c): pass
         def bar(pos, *, c, b, a=1): pass
-        self.assertEqual(inspect.signature(foo), inspect.signature(bar))
+        self.assertTrue(inspect.signature(foo) == inspect.signature(bar))
+        self.assertFalse(inspect.signature(foo) != inspect.signature(bar))
 
         def foo(pos, *, a, b, c): pass
         def bar(pos, *, c, b, a=1): pass
-        self.assertNotEqual(inspect.signature(foo), inspect.signature(bar))
+        self.assertFalse(inspect.signature(foo) == inspect.signature(bar))
+        self.assertTrue(inspect.signature(foo) != inspect.signature(bar))
 
         def foo(pos, *args, a=42, b, c, **kwargs:int): pass
         def bar(pos, *args, c, b, a=42, **kwargs:int): pass
-        self.assertEqual(inspect.signature(foo), inspect.signature(bar))
+        self.assertTrue(inspect.signature(foo) == inspect.signature(bar))
+        self.assertFalse(inspect.signature(foo) != inspect.signature(bar))
 
     def test_signature_unhashable(self):
         def foo(a): pass
@@ -2597,11 +2648,17 @@ class TestParameterObject(unittest.TestCase):
         P = inspect.Parameter
         p = P('foo', default=42, kind=inspect.Parameter.KEYWORD_ONLY)
 
-        self.assertEqual(p, p)
-        self.assertNotEqual(p, 42)
+        self.assertTrue(p == p)
+        self.assertFalse(p != p)
+        self.assertFalse(p == 42)
+        self.assertTrue(p != 42)
+        self.assertTrue(p == EqualsToAll())
+        self.assertFalse(p != EqualsToAll())
 
-        self.assertEqual(p, P('foo', default=42,
-                              kind=inspect.Parameter.KEYWORD_ONLY))
+        self.assertTrue(p == P('foo', default=42,
+                               kind=inspect.Parameter.KEYWORD_ONLY))
+        self.assertFalse(p != P('foo', default=42,
+                                kind=inspect.Parameter.KEYWORD_ONLY))
 
     def test_signature_parameter_unhashable(self):
         p = inspect.Parameter('foo', default=42,
@@ -2904,19 +2961,26 @@ class TestBoundArguments(unittest.TestCase):
     def test_signature_bound_arguments_equality(self):
         def foo(a): pass
         ba = inspect.signature(foo).bind(1)
-        self.assertEqual(ba, ba)
+        self.assertTrue(ba == ba)
+        self.assertFalse(ba != ba)
+        self.assertTrue(ba == EqualsToAll())
+        self.assertFalse(ba != EqualsToAll())
 
         ba2 = inspect.signature(foo).bind(1)
-        self.assertEqual(ba, ba2)
+        self.assertTrue(ba == ba2)
+        self.assertFalse(ba != ba2)
 
         ba3 = inspect.signature(foo).bind(2)
-        self.assertNotEqual(ba, ba3)
+        self.assertFalse(ba == ba3)
+        self.assertTrue(ba != ba3)
         ba3.arguments['a'] = 1
-        self.assertEqual(ba, ba3)
+        self.assertTrue(ba == ba3)
+        self.assertFalse(ba != ba3)
 
         def bar(b): pass
         ba4 = inspect.signature(bar).bind(1)
-        self.assertNotEqual(ba, ba4)
+        self.assertFalse(ba == ba4)
+        self.assertTrue(ba != ba4)
 
 
 class TestSignaturePrivateHelpers(unittest.TestCase):
@@ -3086,6 +3150,34 @@ class TestMain(unittest.TestCase):
         self.assertEqual(err, b'')
 
 
+class TestReload(unittest.TestCase):
+
+    src_before = textwrap.dedent("""\
+def foo():
+    print("Bla")
+    """)
+
+    src_after = textwrap.dedent("""\
+def foo():
+    print("Oh no!")
+    """)
+
+    def assertInspectEqual(self, path, source):
+        inspected_src = inspect.getsource(source)
+        with open(path) as src:
+            self.assertEqual(
+                src.read().splitlines(True),
+                inspected_src.splitlines(True)
+            )
+
+    def test_getsource_reload(self):
+        # see issue 1218234
+        with _ready_to_import('reload_bug', self.src_before) as (name, path):
+            module = importlib.import_module(name)
+            self.assertInspectEqual(path, module)
+            with open(path, 'w') as src:
+                src.write(self.src_after)
+            self.assertInspectEqual(path, module)
 
 
 def test_main():
@@ -3096,7 +3188,7 @@ def test_main():
         TestGetcallargsUnboundMethods, TestGetattrStatic, TestGetGeneratorState,
         TestNoEOL, TestSignatureObject, TestSignatureBind, TestParameterObject,
         TestBoundArguments, TestSignaturePrivateHelpers, TestGetClosureVars,
-        TestUnwrap, TestMain
+        TestUnwrap, TestMain, TestReload
     )
 
 if __name__ == "__main__":

@@ -37,16 +37,6 @@ else:
     SETBINARY = ''
 
 
-try:
-    mkstemp = tempfile.mkstemp
-except AttributeError:
-    # tempfile.mkstemp is not available
-    def mkstemp():
-        """Replacement for mkstemp, calling mktemp."""
-        fname = tempfile.mktemp()
-        return os.open(fname, os.O_RDWR|os.O_CREAT), fname
-
-
 class BaseTestCase(unittest.TestCase):
     def setUp(self):
         # Try to minimize the number of children we have so this test
@@ -317,11 +307,8 @@ class ProcessTestCase(BaseTestCase):
         # Normalize an expected cwd (for Tru64 support).
         # We can't use os.path.realpath since it doesn't expand Tru64 {memb}
         # strings.  See bug #1063571.
-        original_cwd = os.getcwd()
-        os.chdir(cwd)
-        cwd = os.getcwd()
-        os.chdir(original_cwd)
-        return cwd
+        with support.change_cwd(cwd):
+            return os.getcwd()
 
     # For use in the test_cwd* tests below.
     def _split_python_path(self):
@@ -1008,6 +995,39 @@ class ProcessTestCase(BaseTestCase):
         p = subprocess.Popen([sys.executable, "-c", "pass"], bufsize=None)
         self.assertEqual(p.wait(), 0)
 
+    def _test_bufsize_equal_one(self, line, expected, universal_newlines):
+        # subprocess may deadlock with bufsize=1, see issue #21332
+        with subprocess.Popen([sys.executable, "-c", "import sys;"
+                               "sys.stdout.write(sys.stdin.readline());"
+                               "sys.stdout.flush()"],
+                              stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL,
+                              bufsize=1,
+                              universal_newlines=universal_newlines) as p:
+            p.stdin.write(line) # expect that it flushes the line in text mode
+            os.close(p.stdin.fileno()) # close it without flushing the buffer
+            read_line = p.stdout.readline()
+            try:
+                p.stdin.close()
+            except OSError:
+                pass
+            p.stdin = None
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(read_line, expected)
+
+    def test_bufsize_equal_one_text_mode(self):
+        # line is flushed in text mode with bufsize=1.
+        # we should get the full line in return
+        line = "line\n"
+        self._test_bufsize_equal_one(line, line, universal_newlines=True)
+
+    def test_bufsize_equal_one_binary_mode(self):
+        # line is not flushed in binary mode with bufsize=1.
+        # we should get empty response
+        line = b'line' + os.linesep.encode() # assume ascii-based locale
+        self._test_bufsize_equal_one(line, b'', universal_newlines=False)
+
     def test_leaking_fds_on_error(self):
         # see bug #5179: Popen leaks file descriptors to PIPEs if
         # the child fails to execute; this will eventually exhaust
@@ -1120,9 +1140,9 @@ class ProcessTestCase(BaseTestCase):
     def test_handles_closed_on_exception(self):
         # If CreateProcess exits with an error, ensure the
         # duplicate output handles are released
-        ifhandle, ifname = mkstemp()
-        ofhandle, ofname = mkstemp()
-        efhandle, efname = mkstemp()
+        ifhandle, ifname = tempfile.mkstemp()
+        ofhandle, ofname = tempfile.mkstemp()
+        efhandle, efname = tempfile.mkstemp()
         try:
             subprocess.Popen (["*"], stdin=ifhandle, stdout=ofhandle,
               stderr=efhandle)
@@ -1396,9 +1416,27 @@ class POSIXProcessTestCase(BaseTestCase):
             if not enabled:
                 gc.disable()
 
+    @unittest.skipIf(
+        sys.platform == 'darwin', 'setrlimit() seems to fail on OS X')
+    def test_preexec_fork_failure(self):
+        # The internal code did not preserve the previous exception when
+        # re-enabling garbage collection
+        try:
+            from resource import getrlimit, setrlimit, RLIMIT_NPROC
+        except ImportError as err:
+            self.skipTest(err)  # RLIMIT_NPROC is specific to Linux and BSD
+        limits = getrlimit(RLIMIT_NPROC)
+        [_, hard] = limits
+        setrlimit(RLIMIT_NPROC, (0, hard))
+        self.addCleanup(setrlimit, RLIMIT_NPROC, limits)
+        # Forking should raise EAGAIN, translated to BlockingIOError
+        with self.assertRaises(BlockingIOError):
+            subprocess.call([sys.executable, '-c', ''],
+                            preexec_fn=lambda: None)
+
     def test_args_string(self):
         # args is a string
-        fd, fname = mkstemp()
+        fd, fname = tempfile.mkstemp()
         # reopen in text mode
         with open(fd, "w", errors="surrogateescape") as fobj:
             fobj.write("#!/bin/sh\n")
@@ -1443,7 +1481,7 @@ class POSIXProcessTestCase(BaseTestCase):
 
     def test_call_string(self):
         # call() function with string argument on UNIX
-        fd, fname = mkstemp()
+        fd, fname = tempfile.mkstemp()
         # reopen in text mode
         with open(fd, "w", errors="surrogateescape") as fobj:
             fobj.write("#!/bin/sh\n")
@@ -1636,7 +1674,7 @@ class POSIXProcessTestCase(BaseTestCase):
 
     def test_remapping_std_fds(self):
         # open up some temporary files
-        temps = [mkstemp() for i in range(3)]
+        temps = [tempfile.mkstemp() for i in range(3)]
         try:
             temp_fds = [fd for fd, fname in temps]
 
@@ -1681,7 +1719,7 @@ class POSIXProcessTestCase(BaseTestCase):
 
     def check_swap_fds(self, stdin_no, stdout_no, stderr_no):
         # open up some temporary files
-        temps = [mkstemp() for i in range(3)]
+        temps = [tempfile.mkstemp() for i in range(3)]
         temp_fds = [fd for fd, fname in temps]
         try:
             # unlink the files -- we won't need to reopen them
@@ -1889,7 +1927,7 @@ class POSIXProcessTestCase(BaseTestCase):
         open_fds = set(fds)
         # add a bunch more fds
         for _ in range(9):
-            fd = os.open("/dev/null", os.O_RDONLY)
+            fd = os.open(os.devnull, os.O_RDONLY)
             self.addCleanup(os.close, fd)
             open_fds.add(fd)
 
@@ -1951,7 +1989,7 @@ class POSIXProcessTestCase(BaseTestCase):
         open_fds = set()
         # Add a bunch more fds to pass down.
         for _ in range(40):
-            fd = os.open("/dev/null", os.O_RDONLY)
+            fd = os.open(os.devnull, os.O_RDONLY)
             open_fds.add(fd)
 
         # Leave a two pairs of low ones available for use by the
@@ -2183,6 +2221,39 @@ class POSIXProcessTestCase(BaseTestCase):
 
         self.assertNotIn(fd, remaining_fds)
 
+    @support.cpython_only
+    def test_fork_exec(self):
+        # Issue #22290: fork_exec() must not crash on memory allocation failure
+        # or other errors
+        import _posixsubprocess
+        gc_enabled = gc.isenabled()
+        try:
+            # Use a preexec function and enable the garbage collector
+            # to force fork_exec() to re-enable the garbage collector
+            # on error.
+            func = lambda: None
+            gc.enable()
+
+            executable_list = "exec"   # error: must be a sequence
+
+            for args, exe_list, cwd, env_list in (
+                (123,      [b"exe"], None, [b"env"]),
+                ([b"arg"], 123,      None, [b"env"]),
+                ([b"arg"], [b"exe"], 123,  [b"env"]),
+                ([b"arg"], [b"exe"], None, 123),
+            ):
+                with self.assertRaises(TypeError):
+                    _posixsubprocess.fork_exec(
+                        args, exe_list,
+                        True, [], cwd, env_list,
+                        -1, -1, -1, -1,
+                        1, 2, 3, 4,
+                        True, True, func)
+        finally:
+            if not gc_enabled:
+                gc.disable()
+
+
 
 @unittest.skipUnless(mswindows, "Windows specific tests")
 class Win32ProcessTestCase(BaseTestCase):
@@ -2379,7 +2450,7 @@ class CommandsWithSpaces (BaseTestCase):
 
     def setUp(self):
         super().setUp()
-        f, fname = mkstemp(".py", "te st")
+        f, fname = tempfile.mkstemp(".py", "te st")
         self.fname = fname.lower ()
         os.write(f, b"import sys;"
                     b"sys.stdout.write('%d %s' % (len(sys.argv), [a.lower () for a in sys.argv]))"
@@ -2454,6 +2525,22 @@ class ContextManagerTests(BaseTestCase):
                                   stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE) as proc:
                 pass
+
+    def test_broken_pipe_cleanup(self):
+        """Broken pipe error should not prevent wait() (Issue 21619)"""
+        proc = subprocess.Popen([sys.executable, '-c', 'pass'],
+                                stdin=subprocess.PIPE,
+                                bufsize=support.PIPE_MAX_SIZE*2)
+        proc = proc.__enter__()
+        # Prepare to send enough data to overflow any OS pipe buffering and
+        # guarantee a broken pipe error. Data is held in BufferedWriter
+        # buffer until closed.
+        proc.stdin.write(b'x' * support.PIPE_MAX_SIZE)
+        self.assertIsNone(proc.returncode)
+        # EPIPE expected under POSIX; EINVAL under Windows
+        self.assertRaises(OSError, proc.__exit__, None, None, None)
+        self.assertEqual(proc.returncode, 0)
+        self.assertTrue(proc.stdin.closed)
 
 
 def test_main():

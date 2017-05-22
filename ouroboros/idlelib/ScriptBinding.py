@@ -18,13 +18,10 @@ XXX GvR Redesign this interface (yet again) as follows:
 """
 
 import os
-import re
-import string
 import tabnanny
 import tokenize
 import tkinter.messagebox as tkMessageBox
-from idlelib.EditorWindow import EditorWindow
-from idlelib import PyShell, IOBinding
+from idlelib import PyShell
 
 from idlelib.configHandler import idleConf
 from idlelib import macosxSupport
@@ -38,6 +35,7 @@ indent_message = """Error: Inconsistent indentation detected!
 To fix case 2, change all tabs to spaces by using Edit->Select All followed \
 by Format->Untabify Region and specify the number of columns used by each tab.
 """
+
 
 class ScriptBinding:
 
@@ -71,7 +69,7 @@ class ScriptBinding:
             try:
                 tabnanny.process_tokens(tokenize.generate_tokens(f.readline))
             except tokenize.TokenError as msg:
-                msgtxt, (lineno, start) = msg
+                msgtxt, (lineno, start) = msg.args
                 self.editwin.gotoline(lineno)
                 self.errorbox("Tabnanny Tokenizing Error",
                               "Token Error: %s" % msgtxt)
@@ -145,7 +143,8 @@ class ScriptBinding:
             return 'break'
         interp = self.shell.interp
         if PyShell.use_subprocess:
-            interp.restart_subprocess(with_cwd=False)
+            interp.restart_subprocess(with_cwd=False, filename=
+                        self.editwin._filename_to_unicode(filename))
         dirname = os.path.dirname(filename)
         # XXX Too often this discards arguments the user just set...
         interp.runcommand("""if 1:
@@ -198,10 +197,10 @@ class ScriptBinding:
         confirm = tkMessageBox.askokcancel(title="Save Before Run or Check",
                                            message=msg,
                                            default=tkMessageBox.OK,
-                                           master=self.editwin.text)
+                                           parent=self.editwin.text)
         return confirm
 
     def errorbox(self, title, message):
         # XXX This should really be a function of EditorWindow...
-        tkMessageBox.showerror(title, message, master=self.editwin.text)
+        tkMessageBox.showerror(title, message, parent=self.editwin.text)
         self.editwin.text.focus_set()

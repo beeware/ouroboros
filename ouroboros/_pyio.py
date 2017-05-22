@@ -24,8 +24,8 @@ if hasattr(os, 'SEEK_HOLE') :
 DEFAULT_BUFFER_SIZE = 8 * 1024  # bytes
 
 # NOTE: Base classes defined here are registered with the "official" ABCs
-# defined in io.py. We don't use real inheritance though, because we don't
-# want to inherit the C implementations.
+# defined in io.py. We don't use real inheritance though, because we don't want
+# to inherit the C implementations.
 
 # Rebind for compatibility
 BlockingIOError = BlockingIOError
@@ -793,7 +793,7 @@ class _BufferedIOMixin(BufferedIOBase):
         clsname = self.__class__.__name__
         try:
             name = self.name
-        except AttributeError:
+        except Exception:
             return "<_pyio.{0}>".format(clsname)
         else:
             return "<_pyio.{0} name={1!r}>".format(clsname, name)
@@ -833,7 +833,13 @@ class BytesIO(BufferedIOBase):
     def getbuffer(self):
         """Return a readable and writable view of the buffer.
         """
+        if self.closed:
+            raise ValueError("getbuffer on closed file")
         return memoryview(self._buffer)
+
+    def close(self):
+        self._buffer.clear()
+        super().close()
 
     def read(self, size=None):
         if self.closed:
@@ -1224,8 +1230,10 @@ class BufferedRWPair(BufferedIOBase):
         return self.writer.flush()
 
     def close(self):
-        self.writer.close()
-        self.reader.close()
+        try:
+            self.writer.close()
+        finally:
+            self.reader.close()
 
     def isatty(self):
         return self.reader.isatty() or self.writer.isatty()
@@ -1561,13 +1569,13 @@ class TextIOWrapper(TextIOBase):
         result = "<_pyio.TextIOWrapper"
         try:
             name = self.name
-        except AttributeError:
+        except Exception:
             pass
         else:
             result += " name={0!r}".format(name)
         try:
             mode = self.mode
-        except AttributeError:
+        except Exception:
             pass
         else:
             result += " mode={0!r}".format(mode)
@@ -1857,6 +1865,19 @@ class TextIOWrapper(TextIOBase):
         return buffer
 
     def seek(self, cookie, whence=0):
+        def _reset_encoder(position):
+            """Reset the encoder (merely useful for proper BOM handling)"""
+            try:
+                encoder = self._encoder or self._get_encoder()
+            except LookupError:
+                # Sometimes the encoder doesn't exist
+                pass
+            else:
+                if position != 0:
+                    encoder.setstate(0)
+                else:
+                    encoder.reset()
+
         if self.closed:
             raise ValueError("tell on closed file")
         if not self._seekable:
@@ -1877,6 +1898,7 @@ class TextIOWrapper(TextIOBase):
             self._snapshot = None
             if self._decoder:
                 self._decoder.reset()
+            _reset_encoder(position)
             return position
         if whence != 0:
             raise ValueError("unsupported whence (%r)" % (whence,))
@@ -1914,17 +1936,7 @@ class TextIOWrapper(TextIOBase):
                 raise OSError("can't restore logical file position")
             self._decoded_chars_used = chars_to_skip
 
-        # Finally, reset the encoder (merely useful for proper BOM handling)
-        try:
-            encoder = self._encoder or self._get_encoder()
-        except LookupError:
-            # Sometimes the encoder doesn't exist
-            pass
-        else:
-            if cookie != 0:
-                encoder.setstate(0)
-            else:
-                encoder.reset()
+        _reset_encoder(cookie)
         return cookie
 
     def read(self, size=None):
@@ -2089,7 +2101,7 @@ class StringIO(TextIOWrapper):
 
     def __repr__(self):
         # TextIOWrapper tells the encoding in its repr. In StringIO,
-        # that's a implementation detail.
+        # that's an implementation detail.
         return object.__repr__(self)
 
     @property

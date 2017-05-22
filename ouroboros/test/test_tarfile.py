@@ -349,6 +349,29 @@ class CommonReadTest(ReadTest):
             finally:
                 tar.close()
 
+    def test_premature_end_of_archive(self):
+        for size in (512, 600, 1024, 1200):
+            with tarfile.open(tmpname, "w:") as tar:
+                t = tarfile.TarInfo("foo")
+                t.size = 1024
+                tar.addfile(t, io.BytesIO(b"a" * 1024))
+
+            with open(tmpname, "r+b") as fobj:
+                fobj.truncate(size)
+
+            with tarfile.open(tmpname) as tar:
+                with self.assertRaisesRegex(tarfile.ReadError, "unexpected end of data"):
+                    for t in tar:
+                        pass
+
+            with tarfile.open(tmpname) as tar:
+                t = tar.next()
+
+                with self.assertRaisesRegex(tarfile.ReadError, "unexpected end of data"):
+                    tar.extract(t, TEMPDIR)
+
+                with self.assertRaisesRegex(tarfile.ReadError, "unexpected end of data"):
+                    tar.extractfile(t).read()
 
 class MiscReadTestBase(CommonReadTest):
     def requires_name_attribute(self):
@@ -1081,10 +1104,8 @@ class WriteTest(WriteTestBase, unittest.TestCase):
             self.assertEqual(tar.getnames(), [],
                     "added the archive to itself")
 
-            cwd = os.getcwd()
-            os.chdir(TEMPDIR)
-            tar.add(dstname)
-            os.chdir(cwd)
+            with support.change_cwd(TEMPDIR):
+                tar.add(dstname)
             self.assertEqual(tar.getnames(), [],
                     "added the archive to itself")
         finally:
@@ -1241,9 +1262,7 @@ class WriteTest(WriteTestBase, unittest.TestCase):
 
     def test_cwd(self):
         # Test adding the current working directory.
-        cwd = os.getcwd()
-        os.chdir(TEMPDIR)
-        try:
+        with support.change_cwd(TEMPDIR):
             tar = tarfile.open(tmpname, self.mode)
             try:
                 tar.add(".")
@@ -1257,8 +1276,6 @@ class WriteTest(WriteTestBase, unittest.TestCase):
                         self.assertTrue(t.name.startswith("./"), t.name)
             finally:
                 tar.close()
-        finally:
-            os.chdir(cwd)
 
     def test_open_nonwritable_fileobj(self):
         for exctype in OSError, EOFError, RuntimeError:
@@ -1842,6 +1859,10 @@ class MiscTest(unittest.TestCase):
         self.assertEqual(tarfile.nti(b"\xff\x00\x00\x00\x00\x00\x00\x00"),
                          -0x100000000000000)
 
+        # Issue 24514: Test if empty number fields are converted to zero.
+        self.assertEqual(tarfile.nti(b"\0"), 0)
+        self.assertEqual(tarfile.nti(b"       \0"), 0)
+
     def test_write_number_fields(self):
         self.assertEqual(tarfile.itn(1), b"0000001\x00")
         self.assertEqual(tarfile.itn(0o7777777), b"7777777\x00")
@@ -1993,6 +2014,21 @@ class CommandLineTest(unittest.TestCase):
                 tar.getmembers()
         finally:
             support.unlink(tar_name)
+
+    def test_create_command_compressed(self):
+        files = [support.findfile('tokenize_tests.txt'),
+                 support.findfile('tokenize_tests-no-coding-cookie-'
+                                  'and-utf8-bom-sig-only.txt')]
+        for filetype in (GzipTest, Bz2Test, LzmaTest):
+            if not filetype.open:
+                continue
+            try:
+                tar_name = tmpname + '.' + filetype.suffix
+                out = self.tarfilecmd('-c', tar_name, *files)
+                with filetype.taropen(tar_name) as tar:
+                    tar.getmembers()
+            finally:
+                support.unlink(tar_name)
 
     def test_extract_command(self):
         self.make_simple_tarfile(tmpname)

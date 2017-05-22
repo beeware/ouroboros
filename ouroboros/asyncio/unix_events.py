@@ -1,7 +1,6 @@
 """Selector event loop for Unix with signal handling."""
 
 import errno
-import fcntl
 import os
 import signal
 import socket
@@ -9,12 +8,16 @@ import stat
 import subprocess
 import sys
 import threading
+import warnings
 
 
 from . import base_events
 from . import base_subprocess
+from . import compat
 from . import constants
+from . import coroutines
 from . import events
+from . import futures
 from . import selector_events
 from . import selectors
 from . import transports
@@ -67,7 +70,12 @@ class _UnixSelectorEventLoop(selector_events.BaseSelectorEventLoop):
         Raise ValueError if the signal number is invalid or uncatchable.
         Raise RuntimeError if there is a problem setting up the handler.
         """
+        if (coroutines.iscoroutine(callback)
+        or coroutines.iscoroutinefunction(callback)):
+            raise TypeError("coroutines cannot be used "
+                            "with add_signal_handler()")
         self._check_signal(sig)
+        self._check_closed()
         try:
             # set_wakeup_fd() raises ValueError if this is not the
             # main thread.  By calling it early we ensure that an
@@ -169,12 +177,28 @@ class _UnixSelectorEventLoop(selector_events.BaseSelectorEventLoop):
                                    stdin, stdout, stderr, bufsize,
                                    extra=None, **kwargs):
         with events.get_child_watcher() as watcher:
+            waiter = futures.Future(loop=self)
             transp = _UnixSubprocessTransport(self, protocol, args, shell,
                                               stdin, stdout, stderr, bufsize,
-                                              extra=extra, **kwargs)
-            yield from transp._post_init()
+                                              waiter=waiter, extra=extra,
+                                              **kwargs)
+
             watcher.add_child_handler(transp.get_pid(),
                                       self._child_watcher_callback, transp)
+            try:
+                yield from waiter
+            except Exception as exc:
+                # Workaround CPython bug #23353: using yield/yield-from in an
+                # except block of a generator doesn't clear properly
+                # sys.exc_info()
+                err = exc
+            else:
+                err = None
+
+            if err is not None:
+                transp.close()
+                yield from transp._wait()
+                raise err
 
         return transp
 
@@ -263,6 +287,8 @@ if hasattr(os, 'set_blocking'):
     def _set_nonblocking(fd):
         os.set_blocking(fd, False)
 else:
+    import fcntl
+
     def _set_nonblocking(fd):
         flags = fcntl.fcntl(fd, fcntl.F_GETFL)
         flags = flags | os.O_NONBLOCK
@@ -287,14 +313,22 @@ class _UnixReadPipeTransport(transports.ReadTransport):
         _set_nonblocking(self._fileno)
         self._protocol = protocol
         self._closing = False
-        self._loop.add_reader(self._fileno, self._read_ready)
         self._loop.call_soon(self._protocol.connection_made, self)
+        # only start reading when connection_made() has been called
+        self._loop.call_soon(self._loop.add_reader,
+                             self._fileno, self._read_ready)
         if waiter is not None:
-            # wait until protocol.connection_made() has been called
-            self._loop.call_soon(waiter._set_result_unless_cancelled, None)
+            # only wake up the waiter when connection_made() has been called
+            self._loop.call_soon(futures._set_result_unless_cancelled,
+                                 waiter, None)
 
     def __repr__(self):
-        info = [self.__class__.__name__, 'fd=%s' % self._fileno]
+        info = [self.__class__.__name__]
+        if self._pipe is None:
+            info.append('closed')
+        elif self._closing:
+            info.append('closing')
+        info.append('fd=%s' % self._fileno)
         if self._pipe is not None:
             polling = selector_events._test_selector_event(
                           self._loop._selector,
@@ -331,9 +365,21 @@ class _UnixReadPipeTransport(transports.ReadTransport):
     def resume_reading(self):
         self._loop.add_reader(self._fileno, self._read_ready)
 
+    def is_closing(self):
+        return self._closing
+
     def close(self):
         if not self._closing:
             self._close(None)
+
+    # On Python 3.3 and older, objects with a destructor part of a reference
+    # cycle are never destroyed. It's not more the case on Python 3.4 thanks
+    # to the PEP 442.
+    if compat.PY34:
+        def __del__(self):
+            if self._pipe is not None:
+                warnings.warn("unclosed transport %r" % self, ResourceWarning)
+                self._pipe.close()
 
     def _fatal_error(self, exc, message='Fatal error on pipe transport'):
         # should be called by exception handler only
@@ -368,9 +414,8 @@ class _UnixWritePipeTransport(transports._FlowControlMixin,
                               transports.WriteTransport):
 
     def __init__(self, loop, pipe, protocol, waiter=None, extra=None):
-        super().__init__(extra)
+        super().__init__(extra, loop)
         self._extra['pipe'] = pipe
-        self._loop = loop
         self._pipe = pipe
         self._fileno = pipe.fileno()
         mode = os.fstat(self._fileno).st_mode
@@ -386,19 +431,28 @@ class _UnixWritePipeTransport(transports._FlowControlMixin,
         self._conn_lost = 0
         self._closing = False  # Set when close() or write_eof() called.
 
-        # On AIX, the reader trick only works for sockets.
-        # On other platforms it works for pipes and sockets.
-        # (Exception: OS X 10.4?  Issue #19294.)
-        if is_socket or not sys.platform.startswith("aix"):
-            self._loop.add_reader(self._fileno, self._read_ready)
-
         self._loop.call_soon(self._protocol.connection_made, self)
+
+        # On AIX, the reader trick (to be notified when the read end of the
+        # socket is closed) only works for sockets. On other platforms it
+        # works for pipes and sockets. (Exception: OS X 10.4?  Issue #19294.)
+        if is_socket or not sys.platform.startswith("aix"):
+            # only start reading when connection_made() has been called
+            self._loop.call_soon(self._loop.add_reader,
+                                 self._fileno, self._read_ready)
+
         if waiter is not None:
-            # wait until protocol.connection_made() has been called
-            self._loop.call_soon(waiter._set_result_unless_cancelled, None)
+            # only wake up the waiter when connection_made() has been called
+            self._loop.call_soon(futures._set_result_unless_cancelled,
+                                 waiter, None)
 
     def __repr__(self):
-        info = [self.__class__.__name__, 'fd=%s' % self._fileno]
+        info = [self.__class__.__name__]
+        if self._pipe is None:
+            info.append('closed')
+        elif self._closing:
+            info.append('closing')
+        info.append('fd=%s' % self._fileno)
         if self._pipe is not None:
             polling = selector_events._test_selector_event(
                           self._loop._selector,
@@ -490,9 +544,6 @@ class _UnixWritePipeTransport(transports._FlowControlMixin,
     def can_write_eof(self):
         return True
 
-    # TODO: Make the relationships between write_eof(), close(),
-    # abort(), _fatal_error() and _close() more straightforward.
-
     def write_eof(self):
         if self._closing:
             return
@@ -502,10 +553,22 @@ class _UnixWritePipeTransport(transports._FlowControlMixin,
             self._loop.remove_reader(self._fileno)
             self._loop.call_soon(self._call_connection_lost, None)
 
+    def is_closing(self):
+        return self._closing
+
     def close(self):
-        if not self._closing:
+        if self._pipe is not None and not self._closing:
             # write_eof is all what we needed to close the write pipe
             self.write_eof()
+
+    # On Python 3.3 and older, objects with a destructor part of a reference
+    # cycle are never destroyed. It's not more the case on Python 3.4 thanks
+    # to the PEP 442.
+    if compat.PY34:
+        def __del__(self):
+            if self._pipe is not None:
+                warnings.warn("unclosed transport %r" % self, ResourceWarning)
+                self._pipe.close()
 
     def abort(self):
         self._close(None)
@@ -542,6 +605,22 @@ class _UnixWritePipeTransport(transports._FlowControlMixin,
             self._loop = None
 
 
+if hasattr(os, 'set_inheritable'):
+    # Python 3.4 and newer
+    _set_inheritable = os.set_inheritable
+else:
+    import fcntl
+
+    def _set_inheritable(fd, inheritable):
+        cloexec_flag = getattr(fcntl, 'FD_CLOEXEC', 1)
+
+        old = fcntl.fcntl(fd, fcntl.F_GETFD)
+        if not inheritable:
+            fcntl.fcntl(fd, fcntl.F_SETFD, old | cloexec_flag)
+        else:
+            fcntl.fcntl(fd, fcntl.F_SETFD, old & ~cloexec_flag)
+
+
 class _UnixSubprocessTransport(base_subprocess.BaseSubprocessTransport):
 
     def _start(self, args, shell, stdin, stdout, stderr, bufsize, **kwargs):
@@ -553,6 +632,12 @@ class _UnixSubprocessTransport(base_subprocess.BaseSubprocessTransport):
             # other end).  Notably this is needed on AIX, and works
             # just fine on other platforms.
             stdin, stdin_w = self._loop._socketpair()
+
+            # Mark the write end of the stdin pipe as non-inheritable,
+            # needed by close_fds=False on Python 3.3 and older
+            # (Python 3.4 implements the PEP 446, socketpair returns
+            # non-inheritable sockets)
+            _set_inheritable(stdin_w.fileno(), False)
         self._proc = subprocess.Popen(
             args, shell=shell, stdin=stdin, stdout=stdout, stderr=stderr,
             universal_newlines=False, bufsize=bufsize, **kwargs)
@@ -711,7 +796,7 @@ class SafeChildWatcher(BaseChildWatcher):
         pass
 
     def add_child_handler(self, pid, callback, *args):
-        self._callbacks[pid] = callback, args
+        self._callbacks[pid] = (callback, args)
 
         # Prevent a race condition in case the child is already terminated.
         self._do_waitpid(pid)
@@ -869,7 +954,7 @@ class FastChildWatcher(BaseChildWatcher):
 
 
 class _UnixDefaultEventLoopPolicy(events.BaseDefaultEventLoopPolicy):
-    """XXX"""
+    """UNIX event loop policy with a watcher for child processes."""
     _loop_factory = _UnixSelectorEventLoop
 
     def __init__(self):

@@ -123,11 +123,9 @@ def overrideRootMenu(root, flist):
     #
     # Due to a (mis-)feature of TkAqua the user will also see an empty Help
     # menu.
-    from tkinter import Menu, Text, Text
-    from idlelib.EditorWindow import prepstr, get_accelerator
+    from tkinter import Menu
     from idlelib import Bindings
     from idlelib import WindowList
-    from idlelib.MultiCall import MultiCallCreator
 
     closeItem = Bindings.menudefs[0][1][-2]
 
@@ -140,16 +138,14 @@ def overrideRootMenu(root, flist):
     # Remove the 'About' entry from the help menu, it is in the application
     # menu
     del Bindings.menudefs[-1][1][0:2]
-
-    # Remove the 'Configure' entry from the options menu, it is in the
+    # Remove the 'Configure Idle' entry from the options menu, it is in the
     # application menu as 'Preferences'
-    del Bindings.menudefs[-2][1][0:2]
-
+    del Bindings.menudefs[-2][1][0]
     menubar = Menu(root)
     root.configure(menu=menubar)
     menudict = {}
 
-    menudict['windows'] = menu = Menu(menubar, name='windows')
+    menudict['windows'] = menu = Menu(menubar, name='windows', tearoff=0)
     menubar.add_cascade(label='Window', menu=menu, underline=0)
 
     def postwindowsmenu(menu=menu):
@@ -163,10 +159,14 @@ def overrideRootMenu(root, flist):
     WindowList.register_callback(postwindowsmenu)
 
     def about_dialog(event=None):
+        "Handle Help 'About IDLE' event."
+        # Synchronize with EditorWindow.EditorWindow.about_dialog.
         from idlelib import aboutDialog
         aboutDialog.AboutDialog(root, 'About IDLE')
 
     def config_dialog(event=None):
+        "Handle Options 'Configure IDLE' event."
+        # Synchronize with EditorWindow.EditorWindow.config_dialog.
         from idlelib import configDialog
 
         # Ensure that the root object has an instance_dict attribute,
@@ -174,13 +174,13 @@ def overrideRootMenu(root, flist):
         # on an EditorWindow instance that is then passed as the first
         # argument to ConfigDialog)
         root.instance_dict = flist.inversedict
-        root.instance_dict = flist.inversedict
         configDialog.ConfigDialog(root, 'Settings')
 
     def help_dialog(event=None):
-        from idlelib import textView
-        fn = path.join(path.abspath(path.dirname(__file__)), 'help.txt')
-        textView.view_file(root, 'Help', fn)
+        "Handle Help 'IDLE Help' event."
+        # Synchronize with EditorWindow.EditorWindow.help_dialog.
+        from idlelib import help
+        help.show_idlehelp(root)
 
     root.bind('<<about-idle>>', about_dialog)
     root.bind('<<open-config-dialog>>', config_dialog)
@@ -195,7 +195,8 @@ def overrideRootMenu(root, flist):
 
     if isCarbonTk():
         # for Carbon AquaTk, replace the default Tk apple menu
-        menudict['application'] = menu = Menu(menubar, name='apple')
+        menudict['application'] = menu = Menu(menubar, name='apple',
+                                              tearoff=0)
         menubar.add_cascade(label='IDLE', menu=menu)
         Bindings.menudefs.insert(0,
             ('application', [

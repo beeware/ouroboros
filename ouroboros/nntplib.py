@@ -201,7 +201,7 @@ def _parse_overview_fmt(lines):
     return fmt
 
 def _parse_overview(lines, fmt, data_process_func=None):
-    """Parse the response to a OVER or XOVER command according to the
+    """Parse the response to an OVER or XOVER command according to the
     overview format `fmt`."""
     n_defaults = len(_DEFAULT_OVERVIEW_FMT)
     overview = []
@@ -289,8 +289,7 @@ if _have_ssl:
         # Generate a default SSL context if none was passed.
         if context is None:
             context = ssl._create_stdlib_context()
-        server_hostname = hostname if ssl.HAS_SNI else None
-        return context.wrap_socket(sock, server_hostname=server_hostname)
+        return context.wrap_socket(sock, server_hostname=hostname)
 
 
 # The classes themselves
@@ -1042,11 +1041,18 @@ class NNTP(_NNTPBase):
         self.host = host
         self.port = port
         self.sock = socket.create_connection((host, port), timeout)
-        file = self.sock.makefile("rwb")
-        _NNTPBase.__init__(self, file, host,
-                           readermode, timeout)
-        if user or usenetrc:
-            self.login(user, password, usenetrc)
+        file = None
+        try:
+            file = self.sock.makefile("rwb")
+            _NNTPBase.__init__(self, file, host,
+                               readermode, timeout)
+            if user or usenetrc:
+                self.login(user, password, usenetrc)
+        except:
+            if file:
+                file.close()
+            self.sock.close()
+            raise
 
     def _close(self):
         try:
@@ -1066,12 +1072,19 @@ if _have_ssl:
             in default port and the `ssl_context` argument for SSL connections.
             """
             self.sock = socket.create_connection((host, port), timeout)
-            self.sock = _encrypt_on(self.sock, ssl_context, host)
-            file = self.sock.makefile("rwb")
-            _NNTPBase.__init__(self, file, host,
-                               readermode=readermode, timeout=timeout)
-            if user or usenetrc:
-                self.login(user, password, usenetrc)
+            file = None
+            try:
+                self.sock = _encrypt_on(self.sock, ssl_context, host)
+                file = self.sock.makefile("rwb")
+                _NNTPBase.__init__(self, file, host,
+                                   readermode=readermode, timeout=timeout)
+                if user or usenetrc:
+                    self.login(user, password, usenetrc)
+            except:
+                if file:
+                    file.close()
+                self.sock.close()
+                raise
 
         def _close(self):
             try:

@@ -49,7 +49,7 @@ from collections import namedtuple, OrderedDict
 
 # Create constants for the compiler flags in Include/code.h
 # We try to get them from dis to avoid duplication, but fall
-# back to hardcoding so the dependency is optional
+# back to hard-coding so the dependency is optional
 try:
     from dis import COMPILER_FLAG_NAMES as _flag_names
 except ImportError:
@@ -380,7 +380,7 @@ def classify_class_attrs(cls):
                     # first look in the classes
                     for srch_cls in class_bases:
                         srch_obj = getattr(srch_cls, name, None)
-                        if srch_obj == get_obj:
+                        if srch_obj is get_obj:
                             last_cls = srch_cls
                     # then check the metaclasses
                     for srch_cls in metamro:
@@ -388,7 +388,7 @@ def classify_class_attrs(cls):
                             srch_obj = srch_cls.__getattr__(cls, name)
                         except AttributeError:
                             continue
-                        if srch_obj == get_obj:
+                        if srch_obj is get_obj:
                             last_cls = srch_cls
                     if last_cls is not None:
                         homecls = last_cls
@@ -402,7 +402,7 @@ def classify_class_attrs(cls):
             # unable to locate the attribute anywhere, most likely due to
             # buggy custom __dir__; discard and move on
             continue
-        obj = get_obj or dict_obj
+        obj = get_obj if get_obj is not None else dict_obj
         # Classify the object or its descriptor.
         if isinstance(dict_obj, staticmethod):
             kind = "static method"
@@ -652,11 +652,17 @@ def findsource(object):
     in the file and the line number indexes a line in that list.  An OSError
     is raised if the source code cannot be retrieved."""
 
-    file = getfile(object)
-    sourcefile = getsourcefile(object)
-    if not sourcefile and file[:1] + file[-1:] != '<>':
-        raise OSError('source code not available')
-    file = sourcefile if sourcefile else file
+    file = getsourcefile(object)
+    if file:
+        # Invalidate cache if needed.
+        linecache.checkcache(file)
+    else:
+        file = getfile(object)
+        # Allow filenames in form of "<something>" to pass through.
+        # `doctest` monkeypatches `linecache` module to enable
+        # inspection, so let `linecache.getlines` to be called.
+        if not (file.startswith('<') and file.endswith('>')):
+            raise OSError('source code not available')
 
     module = getmodule(object, file)
     if module:
@@ -1905,6 +1911,14 @@ def _signature_internal(obj, follow_wrapper_chains=True, skip_bound_arg=True):
     # Was this function wrapped by a decorator?
     if follow_wrapper_chains:
         obj = unwrap(obj, stop=(lambda f: hasattr(f, "__signature__")))
+        if isinstance(obj, types.MethodType):
+            # If the unwrapped object is a *method*, we might want to
+            # skip its first parameter (self).
+            # See test_signature_wrapped_bound_method for details.
+            return _signature_internal(
+                obj,
+                follow_wrapper_chains=follow_wrapper_chains,
+                skip_bound_arg=skip_bound_arg)
 
     try:
         sig = obj.__signature__
@@ -2192,14 +2206,12 @@ class Parameter:
                                            id(self), self.name)
 
     def __eq__(self, other):
-        return (issubclass(other.__class__, Parameter) and
-                self._name == other._name and
+        if not isinstance(other, Parameter):
+            return NotImplemented
+        return (self._name == other._name and
                 self._kind == other._kind and
                 self._default == other._default and
                 self._annotation == other._annotation)
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
 
 
 class BoundArguments:
@@ -2281,12 +2293,10 @@ class BoundArguments:
         return kwargs
 
     def __eq__(self, other):
-        return (issubclass(other.__class__, BoundArguments) and
-                self.signature == other.signature and
+        if not isinstance(other, BoundArguments):
+            return NotImplemented
+        return (self.signature == other.signature and
                 self.arguments == other.arguments)
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
 
 
 class Signature:
@@ -2479,9 +2489,10 @@ class Signature:
                           return_annotation=return_annotation)
 
     def __eq__(self, other):
-        if (not issubclass(type(other), Signature) or
-                    self.return_annotation != other.return_annotation or
-                    len(self.parameters) != len(other.parameters)):
+        if not isinstance(other, Signature):
+            return NotImplemented
+        if (self.return_annotation != other.return_annotation or
+            len(self.parameters) != len(other.parameters)):
             return False
 
         other_positions = {param: idx
@@ -2507,9 +2518,6 @@ class Signature:
                         return False
 
         return True
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
 
     def _bind(self, args, kwargs, *, partial=False):
         '''Private method.  Don't use directly.'''

@@ -105,31 +105,35 @@ class NTFlavourTest(_BaseFlavourTest, unittest.TestCase):
         check = self._check_parse_parts
         # First part is anchored
         check(['c:'],                   ('c:', '', ['c:']))
-        check(['c:\\'],                 ('c:', '\\', ['c:\\']))
-        check(['\\'],                   ('', '\\', ['\\']))
+        check(['c:/'],                  ('c:', '\\', ['c:\\']))
+        check(['/'],                    ('', '\\', ['\\']))
         check(['c:a'],                  ('c:', '', ['c:', 'a']))
-        check(['c:\\a'],                ('c:', '\\', ['c:\\', 'a']))
-        check(['\\a'],                  ('', '\\', ['\\', 'a']))
+        check(['c:/a'],                 ('c:', '\\', ['c:\\', 'a']))
+        check(['/a'],                   ('', '\\', ['\\', 'a']))
         # UNC paths
-        check(['\\\\a\\b'],             ('\\\\a\\b', '\\', ['\\\\a\\b\\']))
-        check(['\\\\a\\b\\'],           ('\\\\a\\b', '\\', ['\\\\a\\b\\']))
-        check(['\\\\a\\b\\c'],          ('\\\\a\\b', '\\', ['\\\\a\\b\\', 'c']))
+        check(['//a/b'],                ('\\\\a\\b', '\\', ['\\\\a\\b\\']))
+        check(['//a/b/'],               ('\\\\a\\b', '\\', ['\\\\a\\b\\']))
+        check(['//a/b/c'],              ('\\\\a\\b', '\\', ['\\\\a\\b\\', 'c']))
         # Second part is anchored, so that the first part is ignored
         check(['a', 'Z:b', 'c'],        ('Z:', '', ['Z:', 'b', 'c']))
-        check(['a', 'Z:\\b', 'c'],      ('Z:', '\\', ['Z:\\', 'b', 'c']))
-        check(['a', '\\b', 'c'],        ('', '\\', ['\\', 'b', 'c']))
+        check(['a', 'Z:/b', 'c'],       ('Z:', '\\', ['Z:\\', 'b', 'c']))
         # UNC paths
-        check(['a', '\\\\b\\c', 'd'],   ('\\\\b\\c', '\\', ['\\\\b\\c\\', 'd']))
+        check(['a', '//b/c', 'd'],      ('\\\\b\\c', '\\', ['\\\\b\\c\\', 'd']))
         # Collapsing and stripping excess slashes
-        check(['a', 'Z:\\\\b\\\\c\\', 'd\\'], ('Z:', '\\', ['Z:\\', 'b', 'c', 'd']))
+        check(['a', 'Z://b//c/', 'd/'], ('Z:', '\\', ['Z:\\', 'b', 'c', 'd']))
         # UNC paths
-        check(['a', '\\\\b\\c\\\\', 'd'], ('\\\\b\\c', '\\', ['\\\\b\\c\\', 'd']))
+        check(['a', '//b/c//', 'd'],    ('\\\\b\\c', '\\', ['\\\\b\\c\\', 'd']))
         # Extended paths
-        check(['\\\\?\\c:\\'],          ('\\\\?\\c:', '\\', ['\\\\?\\c:\\']))
-        check(['\\\\?\\c:\\a'],         ('\\\\?\\c:', '\\', ['\\\\?\\c:\\', 'a']))
+        check(['//?/c:/'],              ('\\\\?\\c:', '\\', ['\\\\?\\c:\\']))
+        check(['//?/c:/a'],             ('\\\\?\\c:', '\\', ['\\\\?\\c:\\', 'a']))
+        check(['//?/c:/a', '/b'],       ('\\\\?\\c:', '\\', ['\\\\?\\c:\\', 'b']))
         # Extended UNC paths (format is "\\?\UNC\server\share")
-        check(['\\\\?\\UNC\\b\\c'],     ('\\\\?\\UNC\\b\\c', '\\', ['\\\\?\\UNC\\b\\c\\']))
-        check(['\\\\?\\UNC\\b\\c\\d'],  ('\\\\?\\UNC\\b\\c', '\\', ['\\\\?\\UNC\\b\\c\\', 'd']))
+        check(['//?/UNC/b/c'],          ('\\\\?\\UNC\\b\\c', '\\', ['\\\\?\\UNC\\b\\c\\']))
+        check(['//?/UNC/b/c/d'],        ('\\\\?\\UNC\\b\\c', '\\', ['\\\\?\\UNC\\b\\c\\', 'd']))
+        # Second part has a root but not drive
+        check(['a', '/b', 'c'],         ('', '\\', ['\\', 'b', 'c']))
+        check(['Z:/a', '/b', 'c'],      ('Z:', '\\', ['Z:\\', 'b', 'c']))
+        check(['//?/Z:/a', '/b', 'c'],  ('\\\\?\\Z:', '\\', ['\\\\?\\Z:\\', 'b', 'c']))
 
     def test_splitroot(self):
         f = self.flavour.splitroot
@@ -1199,26 +1203,33 @@ class _BasePathTest(object):
 
     # (BASE)
     #  |
-    #  |-- dirA/
-    #       |-- linkC -> "../dirB"
-    #  |-- dirB/
-    #  |    |-- fileB
-    #       |-- linkD -> "../dirB"
-    #  |-- dirC/
-    #  |    |-- fileC
-    #  |    |-- fileD
+    #  |-- brokenLink -> non-existing
+    #  |-- dirA
+    #  |   `-- linkC -> ../dirB
+    #  |-- dirB
+    #  |   |-- fileB
+    #  |   `-- linkD -> ../dirB
+    #  |-- dirC
+    #  |   |-- dirD
+    #  |   |   `-- fileD
+    #  |   `-- fileC
+    #  |-- dirE  # No permissions
     #  |-- fileA
-    #  |-- linkA -> "fileA"
-    #  |-- linkB -> "dirB"
+    #  |-- linkA -> fileA
+    #  `-- linkB -> dirB
     #
 
     def setUp(self):
+        def cleanup():
+            os.chmod(join('dirE'), 0o777)
+            support.rmtree(BASE)
+        self.addCleanup(cleanup)
         os.mkdir(BASE)
-        self.addCleanup(support.rmtree, BASE)
         os.mkdir(join('dirA'))
         os.mkdir(join('dirB'))
         os.mkdir(join('dirC'))
         os.mkdir(join('dirC', 'dirD'))
+        os.mkdir(join('dirE'))
         with open(join('fileA'), 'wb') as f:
             f.write(b"this is file A\n")
         with open(join('dirB', 'fileB'), 'wb') as f:
@@ -1227,13 +1238,14 @@ class _BasePathTest(object):
             f.write(b"this is file C\n")
         with open(join('dirC', 'dirD', 'fileD'), 'wb') as f:
             f.write(b"this is file D\n")
+        os.chmod(join('dirE'), 0)
         if not symlink_skip_reason:
             # Relative symlinks
             os.symlink('fileA', join('linkA'))
             os.symlink('non-existing', join('brokenLink'))
             self.dirlink('dirB', join('linkB'))
             self.dirlink(os.path.join('..', 'dirB'), join('dirA', 'linkC'))
-            # This one goes upwards but doesn't create a loop
+            # This one goes upwards, creating a loop
             self.dirlink(os.path.join('..', 'dirB'), join('dirB', 'linkD'))
 
     if os.name == 'nt':
@@ -1276,9 +1288,12 @@ class _BasePathTest(object):
         self.assertIs(True, p.exists())
         self.assertIs(True, (p / 'dirA').exists())
         self.assertIs(True, (p / 'fileA').exists())
+        self.assertIs(False, (p / 'fileA' / 'bah').exists())
         if not symlink_skip_reason:
             self.assertIs(True, (p / 'linkA').exists())
             self.assertIs(True, (p / 'linkB').exists())
+            self.assertIs(True, (p / 'linkB' / 'fileB').exists())
+            self.assertIs(False, (p / 'linkA' / 'bah').exists())
         self.assertIs(False, (p / 'foo').exists())
         self.assertIs(False, P('/xyzzy').exists())
 
@@ -1299,7 +1314,7 @@ class _BasePathTest(object):
         p = P(BASE)
         it = p.iterdir()
         paths = set(it)
-        expected = ['dirA', 'dirB', 'dirC', 'fileA']
+        expected = ['dirA', 'dirB', 'dirC', 'dirE', 'fileA']
         if not symlink_skip_reason:
             expected += ['linkA', 'linkB', 'brokenLink']
         self.assertEqual(paths, { P(BASE, q) for q in expected })
@@ -1354,16 +1369,36 @@ class _BasePathTest(object):
         p = P(BASE)
         it = p.rglob("fileA")
         self.assertIsInstance(it, collections.Iterator)
-        # XXX cannot test because of symlink loops in the test setup
-        #_check(it, ["fileA"])
-        #_check(p.rglob("fileB"), ["dirB/fileB"])
-        #_check(p.rglob("*/fileA"), [""])
-        #_check(p.rglob("*/fileB"), ["dirB/fileB"])
-        #_check(p.rglob("file*"), ["fileA", "dirB/fileB"])
-        # No symlink loops here
+        _check(it, ["fileA"])
+        _check(p.rglob("fileB"), ["dirB/fileB"])
+        _check(p.rglob("*/fileA"), [])
+        if symlink_skip_reason:
+            _check(p.rglob("*/fileB"), ["dirB/fileB"])
+        else:
+            _check(p.rglob("*/fileB"), ["dirB/fileB", "dirB/linkD/fileB",
+                                        "linkB/fileB", "dirA/linkC/fileB"])
+        _check(p.rglob("file*"), ["fileA", "dirB/fileB",
+                                  "dirC/fileC", "dirC/dirD/fileD"])
         p = P(BASE, "dirC")
         _check(p.rglob("file*"), ["dirC/fileC", "dirC/dirD/fileD"])
         _check(p.rglob("*/*"), ["dirC/dirD/fileD"])
+
+    @with_symlinks
+    def test_rglob_symlink_loop(self):
+        # Don't get fooled by symlink loops (Issue #26012)
+        P = self.cls
+        p = P(BASE)
+        given = set(p.rglob('*'))
+        expect = {'brokenLink',
+                  'dirA', 'dirA/linkC',
+                  'dirB', 'dirB/fileB', 'dirB/linkD',
+                  'dirC', 'dirC/dirD', 'dirC/dirD/fileD', 'dirC/fileC',
+                  'dirE',
+                  'fileA',
+                  'linkA',
+                  'linkB',
+                  }
+        self.assertEqual(given, {p / x for x in expect})
 
     def test_glob_dotdot(self):
         # ".." is not special in globs
@@ -1626,6 +1661,7 @@ class _BasePathTest(object):
         self.assertTrue((P / 'dirA').is_dir())
         self.assertFalse((P / 'fileA').is_dir())
         self.assertFalse((P / 'non-existing').is_dir())
+        self.assertFalse((P / 'fileA' / 'bah').is_dir())
         if not symlink_skip_reason:
             self.assertFalse((P / 'linkA').is_dir())
             self.assertTrue((P / 'linkB').is_dir())
@@ -1636,6 +1672,7 @@ class _BasePathTest(object):
         self.assertTrue((P / 'fileA').is_file())
         self.assertFalse((P / 'dirA').is_file())
         self.assertFalse((P / 'non-existing').is_file())
+        self.assertFalse((P / 'fileA' / 'bah').is_file())
         if not symlink_skip_reason:
             self.assertTrue((P / 'linkA').is_file())
             self.assertFalse((P / 'linkB').is_file())
@@ -1646,6 +1683,7 @@ class _BasePathTest(object):
         self.assertFalse((P / 'fileA').is_symlink())
         self.assertFalse((P / 'dirA').is_symlink())
         self.assertFalse((P / 'non-existing').is_symlink())
+        self.assertFalse((P / 'fileA' / 'bah').is_symlink())
         if not symlink_skip_reason:
             self.assertTrue((P / 'linkA').is_symlink())
             self.assertTrue((P / 'linkB').is_symlink())
@@ -1656,6 +1694,7 @@ class _BasePathTest(object):
         self.assertFalse((P / 'fileA').is_fifo())
         self.assertFalse((P / 'dirA').is_fifo())
         self.assertFalse((P / 'non-existing').is_fifo())
+        self.assertFalse((P / 'fileA' / 'bah').is_fifo())
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "os.mkfifo() required")
     def test_is_fifo_true(self):
@@ -1670,6 +1709,7 @@ class _BasePathTest(object):
         self.assertFalse((P / 'fileA').is_socket())
         self.assertFalse((P / 'dirA').is_socket())
         self.assertFalse((P / 'non-existing').is_socket())
+        self.assertFalse((P / 'fileA' / 'bah').is_socket())
 
     @unittest.skipUnless(hasattr(socket, "AF_UNIX"), "Unix sockets required")
     def test_is_socket_true(self):
@@ -1690,12 +1730,14 @@ class _BasePathTest(object):
         self.assertFalse((P / 'fileA').is_block_device())
         self.assertFalse((P / 'dirA').is_block_device())
         self.assertFalse((P / 'non-existing').is_block_device())
+        self.assertFalse((P / 'fileA' / 'bah').is_block_device())
 
     def test_is_char_device_false(self):
         P = self.cls(BASE)
         self.assertFalse((P / 'fileA').is_char_device())
         self.assertFalse((P / 'dirA').is_char_device())
         self.assertFalse((P / 'non-existing').is_char_device())
+        self.assertFalse((P / 'fileA' / 'bah').is_char_device())
 
     def test_is_char_device_true(self):
         # Under Unix, /dev/null should generally be a char device
