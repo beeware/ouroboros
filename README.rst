@@ -20,7 +20,8 @@ Ouroboros
 .. |gitter| image:: https://badges.gitter.im/pybee/general.svg
     :target: https://gitter.im/pybee/general
 
-A standalone, pure Python implementation of the Python Standard Library.
+A standalone, pure Python implementation of the Python Standard Library. This
+library targets Python versions 3.3 and above.
 
 Documentation
 -------------
@@ -45,6 +46,9 @@ Contributing
 If you experience problems with Ouroboros, `log them on GitHub`_. If you
 want to contribute code, please `fork the code`_ and `submit a pull request`_.
 
+We also have `detailed instructions`_ on how to setup a development environment
+and run tests.
+
 .. _BeeWare suite: http://pybee.org
 .. _Read The Docs: https://pybee-ouroboros.readthedocs.io
 .. _@pybeeware on Twitter: https://twitter.com/pybeeware
@@ -53,3 +57,4 @@ want to contribute code, please `fork the code`_ and `submit a pull request`_.
 .. _log them on Github: https://github.com/pybee/ouroboros/issues
 .. _fork the code: https://github.com/pybee/ouroboros
 .. _submit a pull request: https://github.com/pybee/ouroboros/pulls
+.. _detailed instructions: https://pybee-ouroboros.readthedocs.io/en/latest/internals/contributing.html#setting-up-your-development-environment
