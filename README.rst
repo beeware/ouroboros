@@ -1,6 +1,6 @@
-.. image:: http://pybee.org/project/projects/libraries/ouroboros/ouroboros.png
+.. image:: https://beeware.org/project/projects/libraries/ouroboros/ouroboros.png
     :width: 72px
-    :target: https://pybee.org/ouroboros
+    :target: https://beeware.org/ouroboros
 
 Ouroboros
 =========
