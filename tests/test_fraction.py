@@ -87,12 +87,11 @@ class fractionsTests(unittest.TestCase):
 
     # Use this function for testing edge cases
     def isPrime(self, a):
-        num = 11
         # If given number is greater than 1
         if a > 1:
             # Iterate from 2 to n / 2
             for i in range(2, a//2):
-                if (num % i) == 0:
+                if (a % i) == 0:
                     return False
                     break
                 else:
