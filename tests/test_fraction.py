@@ -39,13 +39,13 @@ class fractionsTests(unittest.TestCase):
     def tearDown(self):
         self.test_values.close()
 
+    #Testing to see if x and y are equal
     def assertFloatIdentical(self, x, y):
         """Fail unless floats x and y are identical, in the sense that:
         (1) both x and y are nans, or
         (2) both x and y are infinities, with the same sign, or
         (3) both x and y are zeros, with the same sign, or
         (4) x and y are both finite and nonzero, and x == y
-
         """
         msg = 'floats {!r} and {!r} are not identical'
 
@@ -61,6 +61,34 @@ class fractionsTests(unittest.TestCase):
             else:
                 msg += ': zeros have different signs'
         self.fail(msg.format(x, y))
+
+    def AssertFractionsEqual(self, a, b, c, d, rel_err=2e-15, abs_err=5e-323, msg=None):
+        """ Here we are checking if 2 fractions are equal. The fractions are
+        a/b and c/d """
+
+        firstFrac = __new__(a, b)
+        secondFrac = __new__(c, d)
+
+        #First test special edge cases:
+        #if we have 0/b, a/0, 0/d, c/0
+
+        #Checking if a == 0 or c == 0 then
+        if (a == 0):
+            self.assertEqual(0, a//b)
+            self.assertEqual(0, _div(firstFrac, secondFrac))
+        else if (c==0):
+            self.assertEqual(0, c//d)
+            self.assertEqual(0, _div(firstFrac, secondFrac))
+
+        # Should return nan
+        if (b==0):
+            self.assertEqual(math.is_nan(), _div(a//b))
+            self.assertEqual(math.is_nan(), _div(firstFrac, secondFrac))
+
+        if (d == 0):
+            self.assertEqual(math.is_nan(), _div(c//d))
+            self.assertEqual(math.is_nan(), _div(firstFrac, secondFrac))
+
 
     def rAssertAlmostEqual(self, a, b, rel_err = 2e-15, abs_err = 5e-323,
                            msg=None):
@@ -123,3 +151,16 @@ class fractionsTests(unittest.TestCase):
         while b:
             a, b = b, a%b
         return a
+
+    def test_values(self, )
+    def test_gcd(self, a, b):
+        self.rAssertAlmostEqual()
+        self.assertFalse(cmath.isnan(1))
+        self.assertFalse(cmath.isnan(1j))
+        self.assertFalse(cmath.isnan(INF))
+        self.assertTrue(cmath.isnan(NAN))
+        self.assertTrue(cmath.isnan(complex(NAN, 0)))
+        self.assertTrue(cmath.isnan(complex(0, NAN)))
+        self.assertTrue(cmath.isnan(complex(NAN, NAN)))
+        self.assertTrue(cmath.isnan(complex(NAN, INF)))
+        self.assertTrue(cmath.isnan(complex(INF, NAN)))
