@@ -1,0 +1,4 @@
+Testing the fraction library:
+
+Functions/methods i can test:
+ - modulo, rmodulo, pow, floordiv
