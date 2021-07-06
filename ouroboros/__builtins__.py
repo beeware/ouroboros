@@ -135,6 +135,30 @@ class _ManagedNewlistHint(object):
 
 sentinel = object()
 
+#min
+def min(object):
+	"""
+		This method will take an iterator and return the minimum value from there.
+	"""
+	if type(object) is int:
+		raise TypeError("'int' object is not iterable")
+	elif type(object) is float:
+		raise TypeError("'float' object is not iterable")
+	elif type(object) is dict:
+		element = "".join(object.keys())
+	elif len(object) == 0:
+		raise ValueError("min() arg is an empty sequence")
+	else:
+		element = object
+
+	mini = element[0]
+
+	for x in element:
+		if mini > x:
+			mini = x
+
+	return mini
+
 def reduce(func, sequence, initial=sentinel):
     """reduce(function, sequence[, initial]) -> value
 
