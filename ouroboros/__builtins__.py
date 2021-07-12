@@ -135,8 +135,10 @@ class _ManagedNewlistHint(object):
 
 sentinel = object()
 
-def min(object):
+def min(*object):
     """This method will take an iterator and return the minimum value from there."""
+
+    if len(object) == 1: object = object[0]
     try:
         is_iterable = object.__iter__ 
     except AttributeError:
