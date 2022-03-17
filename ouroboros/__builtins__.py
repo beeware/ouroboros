@@ -112,6 +112,31 @@ the items of the sequence (or a list of tuples if more than one sequence)."""
             else:
                 result.append(func(*args))
 
+def divmod(a, b):
+    "Return the tuple (x//y, x%y).  Invariant: div*y + mod == x."
+    return (a // b, a % b)
+
+def pow(base, exp, mod=None):
+    """Equivalent to base**exp with 2 arguments or base**exp % mod with 3 arguments
+
+Some types, such as ints, are able to use a more efficient algorithm when
+invoked using the three argument form."""
+    # Reference: https://stackoverflow.com/a/10539256/13884898
+    # arguments, docstring is modified, mod is optional
+    number = 1
+    while exp:
+        if exp & 1:
+            if mod:
+                number = number * base % mod
+            else:
+                number *= base
+        exp >>= 1
+        if mod:
+            base = base * base % mod
+        else:
+            base *= base
+    return number
+
 class _ManagedNewlistHint(object):
     """ Context manager returning a newlist_hint upon entry.
 
