@@ -35,7 +35,7 @@ Ouroboros is part of the `BeeWare suite`_. You can talk to the community through
 
 * `@pybeeware on Twitter`_
 
-* The `pybee/general`_ channel on Gitter.
+* `Discord <https://beeware.org/bee/chat/>`__
 
 We foster a welcoming and respectful community as described in our
 `BeeWare Community Code of Conduct`_.
@@ -52,7 +52,6 @@ and run tests.
 .. _BeeWare suite: http://pybee.org
 .. _Read The Docs: https://pybee-ouroboros.readthedocs.io
 .. _@pybeeware on Twitter: https://twitter.com/pybeeware
-.. _pybee/general: https://gitter.im/pybee/general
 .. _BeeWare Community Code of Conduct: http://pybee.org/community/behavior/
 .. _log them on Github: https://github.com/pybee/ouroboros/issues
 .. _fork the code: https://github.com/pybee/ouroboros
