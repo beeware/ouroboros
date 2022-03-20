@@ -5,7 +5,7 @@
 Ouroboros
 =========
 
-|py-version| |pypi-version| |pypi-status| |license| |build-status| |gitter|
+|py-version| |pypi-version| |pypi-status| |license| |build-status| |discord|
 
 .. |py-version| image:: https://img.shields.io/pypi/pyversions/ouroboros.svg
     :target: https://pypi.python.org/pypi/ouroboros
@@ -17,8 +17,8 @@ Ouroboros
     :target: https://github.com/pybee/ouroboros/blob/master/LICENSE
 .. |build-status| image:: https://travis-ci.org/pybee/ouroboros.svg?branch=master
     :target: https://travis-ci.org/pybee/ouroboros
-.. |gitter| image:: https://badges.gitter.im/pybee/general.svg
-    :target: https://gitter.im/pybee/general
+.. |discord| image:: https://img.shields.io/discord/836455665257021440?label=Discord%20Chat&logo=discord&style=plastic
+    :target: https://beeware.org/bee/chat/
 
 A standalone, pure Python implementation of the Python Standard Library. This
 library targets Python versions 3.3 and above.
